@@ -1,0 +1,18 @@
+[
+  {
+    "id": "video_001",
+    "filename": "sample_security_footage.mp4",
+    "description": "Simulated security footage of a server room.",
+    "tags": ["security", "server room", "access control"],
+    "duration_seconds": 30,
+    "analysis_status": "pending"
+  },
+  {
+    "id": "video_002",
+    "filename": "sample_network_traffic.pcap",
+    "description": "Simulated network traffic capture for anomaly detection.",
+    "tags": ["network", "traffic", "anomaly detection"],
+    "duration_seconds": 60,
+    "analysis_status": "pending"
+  }
+]

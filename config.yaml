@@ -1,0 +1,85 @@
+# Jarvis AI Configuration
+app:
+  name: JARVIS AI Assistant
+  version: 5.0.0
+  debug: True # Set to True for detailed logging
+  log_level: "INFO" # DEBUG, INFO, WARNING, ERROR
+  data_dir: "data"
+  log_dir: "logs"
+
+nlp:
+  model_name: "distilbert-base-uncased" # Example NLP model
+  max_seq_length: 128
+
+memory:
+  db_type: "chromadb" # Options: "chromadb", "neo4j" (requires Neo4j server)
+  chroma_path: "data/chroma_db"
+  embedding_model: "all-MiniLM-L6-v2" # Sentence-transformers model for embeddings
+
+vision:
+  enabled: True # Set to True to enable video analysis
+  model_name: "yolo-v8-nano" # Example vision model
+  cache_dir: "data/vision_cache"
+  video_analysis_cache_size_mb: 500
+
+learning:
+  enabled: True
+  feedback_collection: True
+  scraping_enabled: False # Set to True to enable web scraping
+  scraping_sources:
+    - "https://www.cisa.gov/news-events/cybersecurity-advisories"
+    - "https://nvd.nist.gov/vuln/full-listing"
+  max_scraped_items_per_run: 50
+  feedback_log_path: "data/feedback_logs/feedback.jsonl"
+  scraping_log_path: "data/scraping_logs/scraping.jsonl"
+
+voice:
+  enabled: True # Set to True to enable voice interface (requires additional packages)
+  wake_word: "jarvis"
+  stt_model: "tiny.en" # Whisper model size (tiny, base, small, medium, large)
+  tts_voice: "en-US" # Example TTS voice
+
+api_integrations:
+  security_api_key: "YOUR_SECURITY_API_KEY" # Replace with actual API key
+  weather_api_key: "YOUR_WEATHER_API_KEY" # Replace with actual API key
+  openai_api_key: "your_openai_api_key_here" # Replace with your actual key
+  huggingface_api_key: "your_huggingface_api_key_here" # Replace with your actual key
+  # Add other API keys as needed
+
+collaboration:
+  enabled: True # Set to True to enable collaboration hub
+  server_port: 8080
+  max_active_sessions: 10
+
+deployment:
+  enabled: False # Set to True to enable deployment manager
+  docker_enabled: True
+  kubernetes_enabled: False # Set to True if Kubernetes is configured
+
+ethical_ai:
+  enabled: True
+  violation_threshold: 0.7 # Threshold for flagging ethical violations
+  log_violations: True
+  ethical_violation_log_path: "data/ethical_violations/violations.jsonl"
+  ethical_guidelines:
+    - "Avoid generating harmful, hateful, or discriminatory content."
+    - "Do not provide instructions for illegal activities."
+    - "Maintain user privacy and data security."
+    - "Be transparent about AI capabilities and limitations."
+
+reasoning:
+  enabled: True
+  planning_depth: 3 # How many steps ahead JARVIS plans
+  decision_threshold: 0.7 # Confidence threshold for making decisions
+
+human_ai_teaming:
+  enabled: True
+  adaptive_communication_enabled: True
+  clarification_threshold: 0.4 # Confidence below which JARVIS will ask for clarification
+
+self_correction:
+  enabled: True
+  confidence_threshold: 0.6 # Confidence below which JARVIS will attempt self-correction
+  inconsistency_threshold: 0.3 # Threshold for detecting inconsistency
+  log_corrections: True
+  self_correction_log_path: "data/self_correction_log/corrections.jsonl"
