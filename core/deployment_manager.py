@@ -1,45 +1,57 @@
 import asyncio
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-import platform
-import shutil
 from utils.logger import logger
+import os
+
+# Mock external libraries for Docker/Kubernetes
+try:
+    # import docker # pip install docker
+    # from kubernetes import client, config as k8s_config # pip install kubernetes
+    DOCKER_AVAILABLE = False
+    KUBERNETES_AVAILABLE = False
+except ImportError:
+    DOCKER_AVAILABLE = False
+    KUBERNETES_AVAILABLE = False
+    logger.warning("Docker/Kubernetes client libraries not fully installed. Deployment features will be mocked.")
 
 class DeploymentManager:
     """
-    Manages the deployment of services and applications, including Docker and Kubernetes integration.
+    Manages deployment workflows, including Docker image building and Kubernetes deployments.
     """
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.docker_enabled = config.get("DOCKER_ENABLED", False)
-        self.kubernetes_enabled = config.get("KUBERNETES_ENABLED", False)
-        self.active_deployments: Dict[str, Dict[str, Any]] = {} # deployment_id -> deployment_info
-        
-        self._check_dependencies()
-        logger.info("Deployment Manager initialized.")
+        self.enabled = config.get("DEPLOYMENT_ENABLED", False)
+        self.docker_enabled = config.get("DOCKER_ENABLED", False) and DOCKER_AVAILABLE
+        self.kubernetes_enabled = config.get("KUBERNETES_ENABLED", False) and KUBERNETES_AVAILABLE
 
-    def _check_dependencies(self):
-        """Checks if Docker and Kubernetes tools are available."""
-        if self.docker_enabled:
-            if shutil.which("docker"):
-                logger.info("Docker CLI found.")
-            else:
-                self.docker_enabled = False
-                logger.warning("Docker CLI not found. Docker deployments will be disabled.")
-        
-        if self.kubernetes_enabled:
-            if shutil.which("kubectl"):
-                logger.info("Kubectl CLI found.")
-            else:
-                self.kubernetes_enabled = False
-                logger.warning("Kubectl CLI not found. Kubernetes deployments will be disabled.")
+        self._active_deployments: Dict[str, Dict[str, Any]] = {} # deployment_id -> {name, env, status, type}
+        self._deployment_history: List[Dict[str, Any]] = []
+        self._system_metrics_cache: Dict[str, Any] = {} # Cache for system metrics
+
+        if self.enabled:
+            logger.info(f"Deployment Manager initialized. Docker: {self.docker_enabled}, Kubernetes: {self.kubernetes_enabled}")
+            if self.kubernetes_enabled:
+                self._load_kubernetes_config()
+        else:
+            logger.warning("Deployment Manager is disabled in configuration.")
+
+    def _load_kubernetes_config(self):
+        """Loads Kubernetes configuration (e.g., from kubeconfig file)."""
+        try:
+            # k8s_config.load_kube_config()
+            logger.info("Kubernetes config loaded (simulated).")
+        except Exception as e:
+            logger.error(f"Failed to load Kubernetes config: {e}. Kubernetes deployments may fail.")
+            self.kubernetes_enabled = False
 
     async def create_deployment_config(self, name: str, environment: str, replicas: int = 1,
-                                       image: str = "nginx:latest", ports: List[int] = None,
+                                       image: str = "latest", ports: List[int] = None,
                                        env_vars: Dict[str, str] = None) -> Dict[str, Any]:
         """
-        Creates a standardized deployment configuration.
+        Creates a simulated deployment configuration.
         """
+        logger.info(f"Creating deployment config for {name} in {environment}...")
         config_id = f"deploy_cfg_{datetime.now().timestamp()}"
         deployment_config = {
             "id": config_id,
@@ -49,114 +61,126 @@ class DeploymentManager:
             "image": image,
             "ports": ports if ports else [],
             "env_vars": env_vars if env_vars else {},
-            "created_at": datetime.now().isoformat(),
-            "status": "created"
+            "created_at": datetime.now().isoformat()
         }
-        logger.info(f"Deployment configuration '{name}' created: {config_id}")
+        logger.info(f"Deployment config created: {name}")
         return deployment_config
 
-    async def build_docker_image(self, context_path: str, tag: str) -> bool:
+    async def build_docker_image(self, path: str, tag: str) -> bool:
         """
         Simulates building a Docker image.
-        In a real scenario, this would execute `docker build`.
         """
-        if not self.docker_enabled:
-            logger.warning("Docker is not enabled. Cannot build image.")
+        if not self.enabled or not self.docker_enabled:
+            logger.warning("Docker build is disabled or not available.")
             return False
         
-        logger.info(f"Simulating Docker image build for tag: {tag} from context: {context_path}")
-        # Example: await asyncio.create_subprocess_exec("docker", "build", "-t", tag, context_path)
-        await asyncio.sleep(3) # Simulate build time
-        logger.info(f"Docker image '{tag}' simulated build complete.")
-        return True
+        logger.info(f"Simulating Docker image build for path: {path}, tag: {tag}")
+        try:
+            # client = docker.from_env()
+            # image, logs = client.images.build(path=path, tag=tag)
+            await asyncio.sleep(5) # Simulate build time
+            logger.info(f"Simulated Docker image '{tag}' built successfully.")
+            return True
+        except Exception as e:
+            logger.error(f"Error during simulated Docker image build: {e}")
+            return False
 
-    async def deploy_docker_container(self, deployment_config: Dict[str, Any]) -> str:
+    async def deploy_docker_container(self, deployment_config: Dict[str, Any]) -> Optional[str]:
         """
         Simulates deploying a Docker container.
-        In a real scenario, this would execute `docker run` or `docker compose up`.
         """
-        if not self.docker_enabled:
-            logger.warning("Docker is not enabled. Cannot deploy container.")
-            return "disabled"
+        if not self.enabled or not self.docker_enabled:
+            logger.warning("Docker deployment is disabled or not available.")
+            return None
         
-        deploy_id = f"docker_deploy_{datetime.now().timestamp()}"
-        logger.info(f"Simulating Docker container deployment for '{deployment_config['name']}' (ID: {deploy_id})")
-        
-        # Example: await asyncio.create_subprocess_exec("docker", "run", "-d", deployment_config['image'])
-        await asyncio.sleep(2) # Simulate deployment time
-        
-        self.active_deployments[deploy_id] = {
-            "config_id": deployment_config["id"],
-            "type": "docker",
-            "status": "running",
-            "start_time": datetime.now().isoformat(),
-            "name": deployment_config["name"],
-            "image": deployment_config["image"]
-        }
-        logger.info(f"Docker container '{deployment_config['name']}' deployed successfully. Deployment ID: {deploy_id}")
-        return deploy_id
+        name = deployment_config.get("name", "unknown")
+        logger.info(f"Simulating Docker container deployment for: {name}")
+        try:
+            # client = docker.from_env()
+            # container = client.containers.run(deployment_config["image"], detach=True, ports={f"{p}/tcp": p for p in deployment_config["ports"]})
+            await asyncio.sleep(3) # Simulate deployment time
+            deployment_id = f"docker_deploy_{datetime.now().timestamp()}"
+            self._active_deployments[deployment_id] = {
+                "name": name,
+                "type": "docker",
+                "status": "running",
+                "timestamp": datetime.now().isoformat(),
+                "config": deployment_config
+            }
+            self._deployment_history.append(self._active_deployments[deployment_id])
+            logger.info(f"Simulated Docker container '{name}' deployed. ID: {deployment_id}")
+            return deployment_id
+        except Exception as e:
+            logger.error(f"Error during simulated Docker deployment for {name}: {e}")
+            return None
 
-    async def deploy_to_kubernetes(self, deployment_config: Dict[str, Any]) -> str:
+    async def deploy_to_kubernetes(self, deployment_config: Dict[str, Any]) -> Optional[str]:
         """
         Simulates deploying to Kubernetes.
-        In a real scenario, this would apply Kubernetes manifests using `kubectl apply`.
         """
-        if not self.kubernetes_enabled:
-            logger.warning("Kubernetes is not enabled. Cannot deploy to Kubernetes.")
-            return "disabled"
+        if not self.enabled or not self.kubernetes_enabled:
+            logger.warning("Kubernetes deployment is disabled or not available.")
+            return None
         
-        deploy_id = f"k8s_deploy_{datetime.now().timestamp()}"
-        logger.info(f"Simulating Kubernetes deployment for '{deployment_config['name']}' (ID: {deploy_id})")
-        
-        # Example: Generate K8s YAML and apply it
-        # await asyncio.create_subprocess_exec("kubectl", "apply", "-f", "generated_manifest.yaml")
-        await asyncio.sleep(5) # Simulate deployment time
-        
-        self.active_deployments[deploy_id] = {
-            "config_id": deployment_config["id"],
-            "type": "kubernetes",
-            "status": "running",
-            "start_time": datetime.now().isoformat(),
-            "name": deployment_config["name"],
-            "image": deployment_config["image"]
-        }
-        logger.info(f"Kubernetes deployment '{deployment_config['name']}' successful. Deployment ID: {deploy_id}")
-        return deploy_id
+        name = deployment_config.get("name", "unknown")
+        logger.info(f"Simulating Kubernetes deployment for: {name}")
+        try:
+            # apps_v1 = client.AppsV1Api()
+            # deployment_manifest = self._create_k8s_deployment_manifest(deployment_config)
+            # apps_v1.create_namespaced_deployment(body=deployment_manifest, namespace="default")
+            await asyncio.sleep(7) # Simulate K8s deployment time
+            deployment_id = f"k8s_deploy_{datetime.now().timestamp()}"
+            self._active_deployments[deployment_id] = {
+                "name": name,
+                "type": "kubernetes",
+                "status": "running",
+                "timestamp": datetime.now().isoformat(),
+                "config": deployment_config
+            }
+            self._deployment_history.append(self._active_deployments[deployment_id])
+            logger.info(f"Simulated Kubernetes deployment '{name}' successful. ID: {deployment_id}")
+            return deployment_id
+        except Exception as e:
+            logger.error(f"Error during simulated Kubernetes deployment for {name}: {e}")
+            return None
 
     async def undeploy(self, deployment_id: str) -> bool:
         """
         Simulates undeploying a service.
         """
-        if deployment_id in self.active_deployments:
-            deploy_info = self.active_deployments[deployment_id]
-            logger.info(f"Simulating undeployment of {deploy_info['type']} deployment: {deploy_info['name']} (ID: {deployment_id})")
-            
-            # Example: `docker stop` or `kubectl delete`
-            await asyncio.sleep(1) # Simulate undeployment time
-            
-            del self.active_deployments[deployment_id]
-            logger.info(f"Deployment {deployment_id} undeployed successfully.")
+        if not self.enabled:
+            logger.warning("Deployment Manager is disabled.")
+            return False
+        
+        deployment = self._active_deployments.pop(deployment_id, None)
+        if deployment:
+            logger.info(f"Simulating undeployment of {deployment['name']} ({deployment['type']}) with ID: {deployment_id}")
+            await asyncio.sleep(2) # Simulate undeployment time
+            deployment["status"] = "terminated"
+            deployment["terminated_at"] = datetime.now().isoformat()
+            # Update history entry if needed, or just log
+            logger.info(f"Simulated undeployment of {deployment_id} completed.")
             return True
-        logger.warning(f"Attempted to undeploy non-existent deployment: {deployment_id}")
+        logger.warning(f"Deployment ID {deployment_id} not found or already inactive.")
         return False
 
     def get_deployment_stats(self) -> Dict[str, Any]:
-        """Returns statistics about active deployments and system resources."""
-        # Mock system metrics
-        cpu_usage = 40.0 + (datetime.now().second % 20) # 40-60%
-        memory_usage = 55.0 + (datetime.now().second % 15) # 55-70%
-        disk_usage = 70.0 + (datetime.now().second % 10) # 70-80%
+        """Returns statistics about deployments and system metrics."""
+        # Simulate system metrics (CPU, Memory, Disk)
+        # In a real system, this would query OS or monitoring tools
+        self._system_metrics_cache = {
+            "cpu": {"usage_percent": round(os.getloadavg()[0] * 10, 2) if hasattr(os, 'getloadavg') else 45.0}, # Mock CPU usage
+            "memory": {"percent": 60.0}, # Mock Memory usage
+            "disk": {"percent": 75.0}, # Mock Disk usage
+            "timestamp": datetime.now().isoformat()
+        }
 
         return {
-            "enabled": self.docker_enabled or self.kubernetes_enabled,
+            "enabled": self.enabled,
             "docker_enabled": self.docker_enabled,
             "kubernetes_enabled": self.kubernetes_enabled,
-            "active_deployments": len(self.active_deployments),
-            "deployment_types": {d["type"] for d in self.active_deployments.values()},
-            "system_metrics": {
-                "cpu": {"usage_percent": round(cpu_usage, 2), "cores": platform.processor()},
-                "memory": {"percent": round(memory_usage, 2), "total_gb": 16}, # Mock total
-                "disk": {"percent": round(disk_usage, 2), "total_gb": 500} # Mock total
-            },
-            "last_update": datetime.now().isoformat()
+            "active_deployments": len(self._active_deployments),
+            "total_deployments_history": len(self._deployment_history),
+            "system_metrics": self._system_metrics_cache,
+            "last_updated": datetime.now().isoformat()
         }

@@ -15,18 +15,10 @@ echo "🧪 Running Phase 5 tests..."
 python scripts/test_phase5.py
 
 # This script starts JARVIS AI in chat mode for Phase 5.
-echo "Starting JARVIS AI (Phase 5) in chat mode..."
-
-# Run the main JARVIS application in chat mode (which now includes Phase 5 features)
+echo "Launching JARVIS AI in chat mode..."
 python3 main.py --mode chat
-
-echo "JARVIS AI (Phase 5) stopped."
-
-# Run the main application in admin dashboard mode
-echo "Launching JARVIS AI Admin Dashboard..."
-python3 main.py --mode admin
 if [ $? -ne 0 ]; then
-    echo "JARVIS AI Admin Dashboard failed to start."
+    echo "JARVIS AI failed to start."
     exit 1
 fi
 
@@ -36,7 +28,9 @@ echo ""
 echo "🎉 Phase 5 setup complete!"
 echo ""
 echo "Available interfaces:"
-echo "1. 💬 Advanced Chat: python main.py --mode chat"
-echo "2. 📊 Admin Dashboard (Gradio): python main.py --mode admin"
+echo "1. 💬 Fully Integrated Chat: python main.py --mode chat"
+echo "2. ⚙️ Admin Dashboard (Gradio): python main.py --mode admin"
+echo "3. 🎥 Video UI (Gradio): python main.py --mode vision"
+echo "4. 📝 Feedback UI (Gradio): python main.py --mode learning"
 echo ""
-echo "Try interacting with JARVIS in the chat or explore the Admin Dashboard!"
+echo "Explore JARVIS's advanced capabilities, ethical reasoning, and self-correction!"

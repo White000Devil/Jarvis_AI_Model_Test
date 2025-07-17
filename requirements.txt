@@ -1,15 +1,17 @@
 loguru>=0.7.2
 PyYAML>=6.0.1
 transformers>=4.30.0
-torch==2.3.1
+torch==2.3.1 # For NLP models
 chromadb>=0.4.14
-sentence-transformers>=2.2.2
+sentence-transformers>=2.2.2 # For ChromaDB embeddings
 aiohttp==3.9.5
 beautifulsoup4==4.12.3
-requests==2.32.3
+requests==2.32.3 # For general HTTP requests
 gradio>=4.0.0
 httpx>=0.25.0
 opencv-python>=4.8.1.78 # For Vision Engine
+numpy # For image/video data manipulation
+
 # Optional dependencies for full functionality:
 # For Voice Interface:
 SpeechRecognition>=3.10.0
@@ -21,8 +23,8 @@ PyAudio>=0.2.11 # Often requires system-level installation (e.g., portaudio-dev 
 # pytesseract==0.3.10
 # pyautogui==0.9.54
 # For Docker/Kubernetes Deployment:
-# docker==7.1.0
-# kubernetes==30.1.0
+docker # For Docker integration
+kubernetes # For Kubernetes integration
 # For Neo4j (alternative memory backend):
 # neo4j==5.21.0
 # For Charting in Admin Dashboard:

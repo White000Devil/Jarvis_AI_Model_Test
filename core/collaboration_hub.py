@@ -104,133 +104,114 @@ class CollaborationSession:
         }
 
 class CollaborationHub:
-    def __init__(self, config: Dict[str, Any] = None):
-        self.config = config if config is not None else {}
-        self.collaboration_enabled = self.config.get("COLLABORATION_ENABLED", False)
-        self.max_active_sessions = self.config.get("MAX_ACTIVE_SESSIONS", 10)
-        
-        self.users: Dict[str, Dict[str, Any]] = {} # user_id -> user_data
-        self.workspaces: Dict[str, Dict[str, Any]] = {} # workspace_id -> workspace_data
-        self.active_sessions: Dict[str, Dict[str, Any]] = {} # session_id -> session_data
-        self.message_log: List[Dict[str, Any]] = [] # Simple log of messages
-        
-        if self.collaboration_enabled:
-            logger.info("Collaboration Hub initialized.")
-        else:
-            logger.info("Collaboration Hub is disabled in configuration.")
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.enabled = config.get("COLLABORATION_ENABLED", False)
+        self.server_port = config.get("COLLABORATION_SERVER_PORT", 8080)
+        self.max_active_sessions = config.get("MAX_ACTIVE_SESSIONS", 10)
 
-    async def create_user(self, username: str, email: str, role: str = "user") -> str:
+        self._users: Dict[str, Dict[str, Any]] = {} # user_id -> {name, email, role}
+        self._workspaces: Dict[str, Dict[str, Any]] = {} # workspace_id -> {name, description, created_by, sessions}
+        self._sessions: Dict[str, Dict[str, Any]] = {} # session_id -> {workspace_id, created_by, active_users, messages}
+        self._total_messages = 0
+        self._active_connections = 0 # Placeholder for actual websocket connections
+
+        if self.enabled:
+            logger.info(f"Collaboration Hub initialized. Server Port: {self.server_port}")
+        else:
+            logger.warning("Collaboration Hub is disabled in configuration.")
+
+    async def create_user(self, username: str, email: str, role: str = "member") -> Optional[str]:
         """Creates a new user in the collaboration hub."""
-        if not self.collaboration_enabled:
-            logger.warning("Collaboration Hub disabled. Cannot create user.")
-            return "disabled"
-        
-        user_id = f"user_{len(self.users) + 1}_{datetime.now().timestamp()}"
-        self.users[user_id] = {
-            "username": username,
-            "email": email,
-            "role": role,
-            "created_at": datetime.now().isoformat(),
-            "status": "active"
-        }
+        if not self.enabled: return None
+        user_id = f"user_{datetime.now().timestamp()}"
+        self._users[user_id] = {"username": username, "email": email, "role": role, "created_at": datetime.now().isoformat()}
         logger.info(f"User '{username}' created with ID: {user_id}")
         return user_id
 
-    async def get_user(self, user_id: str) -> Dict[str, Any]:
-        """Retrieves user information."""
-        return self.users.get(user_id, {"error": "User not found"})
+    async def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves user details by ID."""
+        if not self.enabled: return None
+        return self._users.get(user_id)
 
-    async def create_workspace(self, name: str, description: str, created_by_user_id: str) -> str:
-        """Creates a new collaboration workspace."""
-        if not self.collaboration_enabled:
-            logger.warning("Collaboration Hub disabled. Cannot create workspace.")
-            return "disabled"
-
-        workspace_id = f"ws_{len(self.workspaces) + 1}_{datetime.now().timestamp()}"
-        self.workspaces[workspace_id] = {
+    async def create_workspace(self, name: str, description: str, created_by_user_id: str) -> Optional[str]:
+        """Creates a new shared workspace."""
+        if not self.enabled: return None
+        workspace_id = f"ws_{datetime.now().timestamp()}"
+        self._workspaces[workspace_id] = {
             "name": name,
             "description": description,
             "created_by": created_by_user_id,
             "created_at": datetime.now().isoformat(),
-            "members": [created_by_user_id],
-            "status": "active"
+            "sessions": []
         }
-        logger.info(f"Workspace '{name}' created with ID: {workspace_id} by user {created_by_user_id}")
+        logger.info(f"Workspace '{name}' created with ID: {workspace_id} by {created_by_user_id}")
         return workspace_id
 
-    async def create_collaboration_session(self, workspace_id: str, initiated_by_user_id: str) -> str:
-        """
-        Creates a new active collaboration session within a workspace.
-        """
-        if not self.collaboration_enabled:
-            logger.warning("Collaboration Hub disabled. Cannot create session.")
-            return "disabled"
-
-        if workspace_id not in self.workspaces:
+    async def create_collaboration_session(self, workspace_id: str, created_by_user_id: str) -> Optional[str]:
+        """Creates a new collaboration session within a workspace."""
+        if not self.enabled: return None
+        if workspace_id not in self._workspaces:
             logger.error(f"Workspace {workspace_id} not found.")
-            return "workspace_not_found"
-        
-        if len(self.active_sessions) >= self.max_active_sessions:
-            logger.warning("Max active sessions reached. Cannot create new session.")
-            return "max_sessions_reached"
+            return None
+        if len([s for s in self._sessions.values() if s.get("workspace_id") == workspace_id and s.get("is_active", True)]) >= self.max_active_sessions:
+            logger.warning(f"Max active sessions reached for workspace {workspace_id}.")
+            return None
 
-        session_id = f"session_{len(self.active_sessions) + 1}_{datetime.now().timestamp()}"
-        self.active_sessions[session_id] = {
+        session_id = f"session_{datetime.now().timestamp()}"
+        self._sessions[session_id] = {
             "workspace_id": workspace_id,
-            "initiated_by": initiated_by_user_id,
-            "start_time": datetime.now().isoformat(),
-            "participants": [initiated_by_user_id, "JARVIS_AI"], # JARVIS is always a participant
-            "status": "active"
+            "created_by": created_by_user_id,
+            "created_at": datetime.now().isoformat(),
+            "active_users": [created_by_user_id],
+            "messages": [],
+            "is_active": True
         }
-        logger.info(f"Collaboration session {session_id} started in workspace {workspace_id}.")
+        self._workspaces[workspace_id]["sessions"].append(session_id)
+        logger.info(f"Collaboration session {session_id} started in workspace {workspace_id} by {created_by_user_id}")
         return session_id
 
     async def end_collaboration_session(self, session_id: str) -> bool:
         """Ends an active collaboration session."""
-        if session_id in self.active_sessions:
-            self.active_sessions[session_id]["end_time"] = datetime.now().isoformat()
-            self.active_sessions[session_id]["status"] = "ended"
-            del self.active_sessions[session_id]
+        if not self.enabled: return False
+        session = self._sessions.get(session_id)
+        if session:
+            session["is_active"] = False
             logger.info(f"Collaboration session {session_id} ended.")
             return True
-        logger.warning(f"Attempted to end non-existent session: {session_id}")
+        logger.warning(f"Session {session_id} not found or already inactive.")
         return False
 
-    async def send_message(self, session_id: str, sender_id: str, message_type: str, content: str) -> bool:
+    async def send_message(self, session_id: str, user_id: str, message_type: str, content: str) -> bool:
         """Sends a message within a collaboration session."""
-        if not self.collaboration_enabled:
-            logger.warning("Collaboration Hub disabled. Cannot send message.")
-            return False
-
-        if session_id not in self.active_sessions:
-            logger.error(f"Session {session_id} not active. Cannot send message.")
+        if not self.enabled: return False
+        session = self._sessions.get(session_id)
+        if not session or not session.get("is_active"):
+            logger.warning(f"Cannot send message: Session {session_id} not active or found.")
             return False
         
-        message_data = {
-            "session_id": session_id,
-            "sender_id": sender_id,
-            "timestamp": datetime.now().isoformat(),
-            "message_type": message_type, # e.g., "text", "command", "file_share"
-            "content": content
+        message = {
+            "sender_id": user_id,
+            "type": message_type, # e.g., "text", "code", "file_share"
+            "content": content,
+            "timestamp": datetime.now().isoformat()
         }
-        self.message_log.append(message_data)
-        logger.debug(f"Message sent in session {session_id} by {sender_id}: {message_type} - {content[:50]}...")
+        session["messages"].append(message)
+        self._total_messages += 1
+        logger.debug(f"Message sent in session {session_id} by {user_id}: {message_type}")
         return True
 
-    async def get_session_messages(self, session_id: str, limit: int = 100) -> List[Dict[str, Any]]:
-        """Retrieves messages from a specific collaboration session."""
-        return [msg for msg in self.message_log if msg["session_id"] == session_id][-limit:]
-
     def get_collaboration_stats(self) -> Dict[str, Any]:
-        """Returns statistics about the collaboration hub's status."""
+        """Returns statistics about the collaboration hub's activity."""
+        active_sessions = sum(1 for s in self._sessions.values() if s.get("is_active"))
         return {
-            "enabled": self.collaboration_enabled,
-            "users": {"total": len(self.users)},
-            "workspaces": {"total": len(self.workspaces)},
-            "sessions": {"total": len(self.active_sessions) + len([s for s in self.active_sessions.values() if s.get("status") == "ended"]), "active": len(self.active_sessions)},
-            "total_messages": len(self.message_log),
-            "max_active_sessions": self.max_active_sessions,
-            "last_update": datetime.now().isoformat()
+            "enabled": self.enabled,
+            "users": {"total": len(self._users)},
+            "workspaces": {"total": len(self._workspaces)},
+            "sessions": {"total": len(self._sessions), "active": active_sessions},
+            "total_messages": self._total_messages,
+            "active_connections": self._active_connections, # Mock value
+            "last_updated": datetime.now().isoformat()
         }
 
 # Test function for CollaborationHub
@@ -241,32 +222,32 @@ async def test_collaboration_hub():
 
     # Test 1: Create user
     user_id = await collab_hub.create_user("testuser", "test@example.com", "analyst")
-    assert user_id != "disabled", "User creation failed"
-    assert user_id in collab_hub.users, "User not stored"
+    assert user_id is not None, "User creation failed"
+    assert user_id in collab_hub._users, "User not stored"
     logger.info(f"Test 1 (Create User) Passed. User ID: {user_id}")
 
     # Test 2: Get user
     user_data = await collab_hub.get_user(user_id)
-    assert user_data["username"] == "testuser", "Get user failed"
+    assert user_data is not None and user_data["username"] == "testuser", "Get user failed"
     logger.info(f"Test 2 (Get User) Passed. User data: {user_data}")
 
     # Test 3: Create workspace
     workspace_id = await collab_hub.create_workspace("Test Workspace", "A workspace for testing", user_id)
-    assert workspace_id != "disabled", "Workspace creation failed"
-    assert workspace_id in collab_hub.workspaces, "Workspace not stored"
+    assert workspace_id is not None, "Workspace creation failed"
+    assert workspace_id in collab_hub._workspaces, "Workspace not stored"
     logger.info(f"Test 3 (Create Workspace) Passed. Workspace ID: {workspace_id}")
 
     # Test 4: Create collaboration session
     session_id = await collab_hub.create_collaboration_session(workspace_id, user_id)
-    assert session_id != "disabled" and session_id != "workspace_not_found" and session_id != "max_sessions_reached", "Session creation failed"
-    assert session_id in collab_hub.active_sessions, "Session not stored"
-    assert collab_hub.active_sessions[session_id]["status"] == "active", "Session status incorrect"
+    assert session_id is not None, "Session creation failed"
+    assert session_id in collab_hub._sessions, "Session not stored"
+    assert collab_hub._sessions[session_id]["is_active"] is True, "Session status incorrect"
     logger.info(f"Test 4 (Create Session) Passed. Session ID: {session_id}")
 
     # Test 5: Send message
     message_sent = await collab_hub.send_message(session_id, user_id, "chat", "Hello everyone!")
     assert message_sent is True, "Send message failed"
-    assert len([msg for msg in collab_hub.message_log if msg["session_id"] == session_id]) == 1, "Message not logged"
+    assert len([msg for msg in collab_hub._sessions[session_id]["messages"]]) == 1, "Message not logged"
     logger.info(f"Test 5 (Send Message) Passed.")
 
     # Test 6: Update shared context
@@ -284,7 +265,7 @@ async def test_collaboration_hub():
     # Test 8: End collaboration session
     session_ended = await collab_hub.end_collaboration_session(session_id)
     assert session_ended is True, "End session failed"
-    assert session_id not in collab_hub.active_sessions, "Session still active"
+    assert session_id in collab_hub._sessions and collab_hub._sessions[session_id]["is_active"] is False, "Session still active"
     logger.info(f"Test 8 (End Session) Passed.")
 
     logger.info("--- CollaborationHub Tests Passed ---")

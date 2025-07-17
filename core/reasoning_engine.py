@@ -1,5 +1,5 @@
 import asyncio
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 from datetime import datetime
 from utils.logger import logger
 from core.nlp_engine import NLPEngine
@@ -10,8 +10,9 @@ from core.ethical_ai import EthicalAIEngine
 
 class ReasoningEngine:
     """
-    The core reasoning and decision-making component of JARVIS AI.
-    It plans actions, makes decisions, and integrates information from other engines.
+    The core reasoning and planning engine for JARVIS AI.
+    It takes processed NLP input, consults memory and other engines,
+    and formulates a plan to generate a comprehensive response or action.
     """
     def __init__(self, nlp_engine: NLPEngine, memory_manager: MemoryManager,
                  api_integrations: APIIntegrations, vision_engine: VisionEngine,
@@ -23,110 +24,176 @@ class ReasoningEngine:
         self.vision_engine = vision_engine
         self.ethical_ai_engine = ethical_ai_engine
         
-        self.reasoning_enabled = config.get("REASONING_ENABLED", False)
-        self.planning_depth = config.get("PLANNING_DEPTH", 3) # How many steps ahead to plan
-        self.decision_threshold = config.get("DECISION_THRESHOLD", 0.7) # Confidence for making a decision
+        self.enabled = config.get("REASONING_ENABLED", True)
+        self.planning_depth = config.get("PLANNING_DEPTH", 3) # How many steps ahead JARVIS plans
+        self.decision_threshold = config.get("DECISION_THRESHOLD", 0.7) # Confidence threshold for making decisions
 
-        if self.reasoning_enabled:
+        self._total_reasoning_cycles = 0
+        self._successful_plans = 0
+        self._failed_plans = 0
+
+        if self.enabled:
             logger.info("Reasoning Engine initialized.")
         else:
-            logger.info("Reasoning Engine is disabled in configuration.")
+            logger.warning("Reasoning Engine is disabled in configuration.")
 
-    async def reason_on_query(self, query: str, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def reason_on_query(self, query: str, nlp_result: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Performs reasoning to formulate a plan and generate a response based on the query and context.
+        Performs multi-step reasoning to understand the query, gather information,
+        and formulate a plan to generate a response or execute an action.
         """
-        if not self.reasoning_enabled:
-            return {"reasoning_steps": ["Reasoning engine is disabled."], "decisions": [], "final_plan": "Respond directly.", "response": "I am operating in a simplified mode as my reasoning capabilities are currently disabled."}
+        if not self.enabled:
+            return {"response": "Reasoning engine is disabled.", "reasoning_steps": [], "final_plan": "N/A", "decisions": []}
 
-        logger.info(f"Reasoning on query: '{query}' with planning depth {self.planning_depth}")
-        reasoning_steps = []
-        decisions = []
-        final_plan = "No specific plan formulated."
-        response_content = "I am thinking..."
+        self._total_reasoning_cycles += 1
+        logger.info(f"Starting reasoning for query: '{query}' (Intent: {nlp_result['metadata']['intent']})")
+        
+        reasoning_steps: List[str] = []
+        decisions: List[Dict[str, Any]] = []
+        final_plan: List[str] = []
+        response_content = "I am thinking about how to best respond to your request."
 
         try:
-            # Step 1: Understand Intent and Extract Entities (via NLP)
-            nlp_result = await self.nlp_engine.process_query(query, context)
             intent = nlp_result["metadata"]["intent"]
             confidence = nlp_result["metadata"]["confidence"]
-            reasoning_steps.append(f"1. Understood intent: '{intent}' with confidence {confidence:.2f}.")
-            decisions.append({"step": 1, "decision": f"Identified intent as '{intent}'", "confidence": confidence})
 
-            # Step 2: Consult Memory/Knowledge Base if needed
-            relevant_knowledge = []
-            if intent == "security_query":
-                relevant_knowledge = await self.memory_manager.search_security_knowledge(query, limit=2)
-                reasoning_steps.append(f"2. Searched security knowledge. Found {len(relevant_knowledge)} relevant items.")
-                if relevant_knowledge:
-                    decisions.append({"step": 2, "decision": "Retrieved security knowledge.", "details": [r['metadata']['title'] for r in relevant_knowledge]})
-            elif intent == "general_query":
-                relevant_knowledge = await self.memory_manager.search_knowledge(query, limit=2)
-                reasoning_steps.append(f"2. Searched general knowledge. Found {len(relevant_knowledge)} relevant items.")
-                if relevant_knowledge:
-                    decisions.append({"step": 2, "decision": "Retrieved general knowledge.", "details": [r['metadata']['title'] for r in relevant_knowledge]})
-            
-            # Step 3: Plan Actions based on Intent and Knowledge (up to planning_depth)
-            if intent == "security_query" and relevant_knowledge:
-                final_plan = "Provide information from security knowledge base."
-                response_content = f"Based on my knowledge, {relevant_knowledge[0]['document'][:200]}..."
-                if len(relevant_knowledge) > 1:
-                    response_content += f" Also found: {relevant_knowledge[1]['document'][:100]}..."
-                decisions.append({"step": 3, "decision": "Formulated plan to provide knowledge.", "plan": final_plan})
-            elif intent == "deployment_request":
-                final_plan = "Ask for deployment details (e.g., image, environment)."
-                response_content = "To help with deployment, I need more details. What image do you want to deploy and to which environment (e.g., Docker, Kubernetes)?"
-                decisions.append({"step": 3, "decision": "Formulated plan to ask for more details.", "plan": final_plan})
-            elif intent == "video_analysis_request":
-                final_plan = "Request video path and initiate analysis."
-                response_content = "I can analyze videos. Please provide the full path to the video file."
-                decisions.append({"step": 3, "decision": "Formulated plan to request video path.", "plan": final_plan})
-            elif intent == "learning_query":
-                final_plan = "Offer options for feedback or knowledge acquisition."
-                response_content = "I'm ready to learn! Would you like to provide feedback on a previous interaction, or should I scrape new security data?"
-                decisions.append({"step": 3, "decision": "Formulated plan to offer learning options.", "plan": final_plan})
-            elif intent == "collaboration_query":
-                final_plan = "Offer to create or join a collaboration session."
-                response_content = "I can set up a collaboration session. Do you want to create a new one or join an existing one?"
-                decisions.append({"step": 3, "decision": "Formulated plan to offer collaboration options.", "plan": final_plan})
-            elif intent == "admin_query":
-                final_plan = "Inform user about admin dashboard access."
-                response_content = "The admin dashboard provides comprehensive control. You can access it by running JARVIS with the `--mode admin` flag."
-                decisions.append({"step": 3, "decision": "Formulated plan to inform about admin access.", "plan": final_plan})
-            else:
-                final_plan = "Provide a general, helpful response."
-                response_content = nlp_result["content"] # Default NLP response
-                decisions.append({"step": 3, "decision": "Formulated plan for general response.", "plan": final_plan})
+            reasoning_steps.append(f"1. Initial NLP intent: {intent} (Confidence: {confidence:.2f})")
 
-            # Step 4: Execute Plan (simplified - actual execution happens in main loop)
-            reasoning_steps.append(f"4. Final plan formulated: '{final_plan}'.")
+            # Step 2: Consult Memory for relevant context/knowledge
+            relevant_conversations = await self.memory_manager.search_conversations(query, limit=2)
+            relevant_knowledge = await self.memory_manager.search_knowledge(query, limit=2)
+            relevant_security_knowledge = await self.memory_manager.search_security_knowledge(query, limit=2)
             
-            # Decision confidence check
+            reasoning_steps.append(f"2. Consulted Memory: Found {len(relevant_conversations)} conversations, {len(relevant_knowledge)} general knowledge, {len(relevant_security_knowledge)} security knowledge.")
+
+            # Step 3: Decision Making based on intent and confidence
             if confidence < self.decision_threshold:
-                response_content = f"I'm not entirely confident about my understanding of your request regarding '{query}'. Could you please rephrase or provide more details? My current intent confidence is {confidence:.2f}."
-                final_plan = "Seek clarification due to low confidence."
-                decisions.append({"step": 4, "decision": "Seek clarification due to low confidence.", "confidence": confidence})
+                decisions.append({"type": "clarification_needed", "reason": "Low NLP confidence."})
+                response_content = "I'm not entirely confident about my understanding. Could you please provide more details?"
+                final_plan.append("Request clarification.")
+                self._failed_plans += 1
+                return {"response": response_content, "reasoning_steps": reasoning_steps, "final_plan": final_plan, "decisions": decisions}
+
+            if intent == "security_query":
+                reasoning_steps.append("3. Intent is 'security_query'. Planning security analysis.")
+                final_plan.append("Perform security analysis via API.")
+                
+                # Simulate identifying target from query or context
+                target = context.get("target", "example.com") # Default target
+                if "vulnerability" in query.lower():
+                    analysis_type = "vulnerability_scan"
+                elif "threat" in query.lower():
+                    analysis_type = "threat_intelligence"
+                else:
+                    analysis_type = "general_scan"
+
+                security_results = await self.api_integrations.security_analysis(target, analysis_type)
+                reasoning_steps.append(f"4. Executed API: Security analysis for {target} returned {security_results.get('status')}.")
+                
+                if security_results.get("status") == "completed":
+                    vulnerabilities = security_results.get("vulnerabilities_found", 0)
+                    response_content = f"Security analysis for {target} completed. Found {vulnerabilities} vulnerabilities."
+                    if vulnerabilities > 0:
+                        response_content += f" Details: {security_results.get('details', 'N/A')}"
+                else:
+                    response_content = f"Failed to perform security analysis for {target}: {security_results.get('error', 'Unknown error')}."
+                
+                decisions.append({"type": "executed_security_analysis", "target": target, "status": security_results.get('status')})
+
+            elif intent == "video_analysis_request":
+                reasoning_steps.append("3. Intent is 'video_analysis_request'. Planning video analysis.")
+                final_plan.append("Perform video analysis via Vision Engine.")
+                
+                video_path = context.get("video_path", "data/video_datasets/sample_security_footage.mp4")
+                if not Path(video_path).exists():
+                    response_content = f"Video file not found at {video_path}. Please provide a valid path."
+                    decisions.append({"type": "missing_resource", "resource": "video_file"})
+                    self._failed_plans += 1
+                else:
+                    analysis_results = await self.vision_engine.analyze_video(video_path)
+                    reasoning_steps.append(f"4. Executed Vision Engine: Video analysis for {video_path} returned {analysis_results.get('status')}.")
+                    
+                    if analysis_results.get("status") == "completed":
+                        response_content = f"Video analysis of {video_path} completed. Summary: {analysis_results.get('summary')}"
+                    else:
+                        response_content = f"Failed to analyze video {video_path}: {analysis_results.get('reason', 'Unknown error')}."
+                    decisions.append({"type": "executed_video_analysis", "path": video_path, "status": analysis_results.get('status')})
+
+            elif intent == "deployment_request":
+                reasoning_steps.append("3. Intent is 'deployment_request'. Planning deployment.")
+                final_plan.append("Simulate deployment via Deployment Manager.")
+                
+                # Mock deployment parameters
+                deploy_name = context.get("deploy_name", "my-app")
+                deploy_env = context.get("deploy_env", "staging")
+                
+                deploy_config = await self.api_integrations.create_deployment_config(deploy_name, deploy_env)
+                if self.api_integrations.docker_enabled: # Use docker if available
+                    deploy_id = await self.api_integrations.deploy_docker_container(deploy_config)
+                    deploy_type = "Docker"
+                elif self.api_integrations.kubernetes_enabled: # Fallback to k8s
+                    deploy_id = await self.api_integrations.deploy_to_kubernetes(deploy_config)
+                    deploy_type = "Kubernetes"
+                else:
+                    deploy_id = None
+                    deploy_type = "N/A"
+
+                if deploy_id:
+                    response_content = f"Simulated {deploy_type} deployment '{deploy_name}' initiated successfully with ID: {deploy_id}."
+                else:
+                    response_content = f"Failed to initiate simulated deployment for '{deploy_name}'. Deployment features might be disabled or unavailable."
+                decisions.append({"type": "executed_deployment", "name": deploy_name, "id": deploy_id})
+
+            elif intent == "general_query" or intent == "greeting" or intent == "gratitude":
+                reasoning_steps.append("3. Intent is general/greeting. Providing direct response.")
+                final_plan.append("Provide direct NLP response.")
+                response_content = nlp_result["content"] # Use the direct NLP response
+                decisions.append({"type": "direct_response"})
+            
+            else:
+                reasoning_steps.append("3. Intent not explicitly handled. Searching memory for best match.")
+                final_plan.append("Search memory and synthesize response.")
+                
+                # Fallback: search all memory types and synthesize
+                all_relevant_data = []
+                all_relevant_data.extend(await self.memory_manager.search_conversations(query, limit=1))
+                all_relevant_data.extend(await self.memory_manager.search_knowledge(query, limit=1))
+                all_relevant_data.extend(await self.memory_manager.search_security_knowledge(query, limit=1))
+
+                if all_relevant_data:
+                    # Simple synthesis: combine documents
+                    combined_content = "Based on my knowledge: " + " ".join([d["document"] for d in all_relevant_data])
+                    response_content = combined_content[:500] + "..." if len(combined_content) > 500 else combined_content
+                    decisions.append({"type": "synthesized_from_memory", "sources": [d["metadata"]["source"] for d in all_relevant_data]})
+                else:
+                    response_content = "I don't have enough information to provide a detailed answer to that. Can you rephrase or provide more context?"
+                    decisions.append({"type": "insufficient_knowledge"})
+                
+            self._successful_plans += 1
 
         except Exception as e:
+            self._failed_plans += 1
             logger.error(f"Error during reasoning for query '{query}': {e}")
-            reasoning_steps.append(f"Error during reasoning: {e}")
-            response_content = "An internal error occurred during my reasoning process. Please try again."
-            final_plan = "Error handling."
+            response_content = f"An internal reasoning error occurred: {e}"
+            decisions.append({"type": "reasoning_error", "error": str(e)})
+            final_plan.append("Error handling.")
 
-        logger.info(f"Reasoning complete. Final plan: '{final_plan}'")
+        logger.info(f"Reasoning completed for query: '{query}'. Final response: '{response_content[:100]}...'")
         return {
+            "response": response_content,
             "reasoning_steps": reasoning_steps,
-            "decisions": decisions,
             "final_plan": final_plan,
-            "response": response_content
+            "decisions": decisions
         }
 
     def get_reasoning_stats(self) -> Dict[str, Any]:
-        """Returns statistics about the Reasoning Engine's activity."""
+        """Returns statistics about the reasoning engine's performance."""
         return {
-            "enabled": self.reasoning_enabled,
+            "enabled": self.enabled,
             "planning_depth": self.planning_depth,
             "decision_threshold": self.decision_threshold,
-            "last_reasoning_timestamp": datetime.now().isoformat(),
-            "total_reasoning_cycles": 0 # Placeholder
+            "total_reasoning_cycles": self._total_reasoning_cycles,
+            "successful_plans": self._successful_plans,
+            "failed_plans": self._failed_plans,
+            "last_updated": datetime.now().isoformat()
         }

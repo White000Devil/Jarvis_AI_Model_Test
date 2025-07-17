@@ -1,5 +1,5 @@
 import asyncio
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 from utils.logger import logger
 from core.nlp_engine import NLPEngine
@@ -17,17 +17,19 @@ class HumanAITeaming:
         self.nlp_engine = nlp_engine
         self.memory_manager = memory_manager
         self.collaboration_hub = collaboration_hub
-        
-        self.enabled = config.get("HUMAN_AI_TEAMING_ENABLED", False)
-        self.clarification_threshold = config.get("CLARIFICATION_THRESHOLD", 0.4) # Confidence below which JARVIS seeks clarification
+        self.enabled = config.get("HUMAN_AI_TEAMING_ENABLED", True)
         self.adaptive_communication_enabled = config.get("ADAPTIVE_COMMUNICATION_ENABLED", True)
+        self.clarification_threshold = config.get("CLARIFICATION_THRESHOLD", 0.4)
+
+        self._clarification_requests_sent = 0
+        self._communication_adaptations_made = 0
 
         if self.enabled:
             logger.info("Human-AI Teaming Engine initialized.")
         else:
-            logger.info("Human-AI Teaming Engine is disabled in configuration.")
+            logger.warning("Human-AI Teaming Engine is disabled in configuration.")
 
-    async def clarify_request(self, user_input: str, jarvis_response_metadata: Dict[str, Any], context: Dict[str, Any]) -> Optional[str]:
+    async def clarify_request(self, user_input: str, nlp_confidence: float, context: Dict[str, Any]) -> Optional[str]:
         """
         Determines if clarification is needed based on JARVIS's confidence
         and generates a clarifying question.
@@ -36,21 +38,17 @@ class HumanAITeaming:
         if not self.enabled:
             return None
 
-        confidence = jarvis_response_metadata.get("confidence", 1.0)
-        intent = jarvis_response_metadata.get("intent", "unknown")
-
-        if confidence < self.clarification_threshold:
-            logger.info(f"Low confidence ({confidence:.2f}) detected for intent '{intent}'. Seeking clarification.")
+        if nlp_confidence < self.clarification_threshold:
+            self._clarification_requests_sent += 1
+            logger.info(f"Low NLP confidence ({nlp_confidence:.2f}). Requesting clarification for: '{user_input}'")
             
-            if intent == "unknown" or confidence < 0.2:
-                return "I'm having trouble understanding your request. Could you please rephrase it or provide more context?"
-            elif intent == "security_query":
-                return f"I detected a security-related query, but my confidence is low ({confidence:.2f}). Could you specify what kind of security information you're looking for (e.g., vulnerability, threat intelligence, best practices)?"
-            elif intent == "deployment_request":
-                return f"I understand you're asking about deployment, but I need more details. Are you looking to deploy a Docker container, a Kubernetes service, or something else?"
+            # Simulate generating a clarification question
+            if "security" in user_input.lower():
+                return "I'm not entirely clear on the security aspect of your request. Could you please specify the target or the type of vulnerability you're interested in?"
+            elif "deploy" in user_input.lower():
+                return "I need more details about the deployment. Which environment are you targeting (e.g., development, staging, production) or what service are you trying to deploy?"
             else:
-                return f"My understanding of your request is a bit unclear ({confidence:.2f}). Could you elaborate on what you mean by '{user_input}'?"
-        
+                return "I'm not entirely sure I understood your request. Could you please rephrase or provide more context?"
         return None
 
     async def adapt_communication(self, user_input: str, jarvis_response: str, context: Dict[str, Any]) -> str:
@@ -61,29 +59,39 @@ class HumanAITeaming:
         if not self.enabled or not self.adaptive_communication_enabled:
             return jarvis_response
 
-        # Simulate adapting based on user's role (if available in context)
-        user_role = context.get("user_role", "general")
+        adapted_response = jarvis_response
         
-        if user_role == "developer":
-            if "explain" in user_input.lower() and "code" in user_input.lower():
-                logger.info("Adapting communication for developer: providing more technical detail.")
-                return f"{jarvis_response} (Technically, this involves X, Y, and Z components.)"
-        elif user_role == "security_analyst":
-            if "threat" in user_input.lower() or "vulnerability" in user_input.lower():
-                logger.info("Adapting communication for security analyst: using precise terminology.")
-                return f"{jarvis_response} (Specifically, this aligns with CVE-XXXX-YYYY.)"
-        elif user_role == "executive":
-            logger.info("Adapting communication for executive: providing high-level summary.")
-            # This would require summarizing the original response
-            return f"In summary: {jarvis_response[:50]}..." # Very basic summary
+        # Simulate adaptation based on context (e.g., user role, emotional tone)
+        user_role = context.get("user_role", "unknown")
+        user_sentiment = context.get("user_sentiment", "neutral") # From NLP metadata
 
-        # Simulate adapting based on sentiment of user input (requires NLP sentiment analysis)
-        # For now, a simple keyword check
-        if "frustrated" in user_input.lower() or "annoyed" in user_input.lower():
-            logger.info("Adapting communication due to perceived user frustration.")
-            return f"I understand this might be frustrating. Let me try to explain differently: {jarvis_response}"
+        if user_role == "technical_expert":
+            adapted_response = f"Acknowledged. {jarvis_response}" # More concise
+            self._communication_adaptations_made += 1
+        elif user_role == "beginner":
+            adapted_response = f"Let me explain that in simpler terms. {jarvis_response}" # More verbose
+            self._communication_adaptations_made += 1
+        
+        if user_sentiment == "negative":
+            adapted_response = f"I understand your concern. {jarvis_response}" # Empathetic tone
+            self._communication_adaptations_made += 1
+        elif user_sentiment == "positive":
+            adapted_response = f"Great! {jarvis_response}" # Enthusiastic tone
+            self._communication_adaptations_made += 1
 
-        return jarvis_response
+        logger.debug(f"Communication adapted for user role '{user_role}' and sentiment '{user_sentiment}'.")
+        return adapted_response
+
+    async def get_human_feedback_on_clarification(self, original_query: str, clarification_question: str) -> str:
+        """
+        Simulates getting explicit human feedback on a clarification question.
+        This would typically be a UI interaction.
+        """
+        logger.info(f"Seeking human feedback for clarification: '{clarification_question}' on original query: '{original_query}'")
+        # In a real system, this would involve a UI prompt or a human-in-the-loop system.
+        # For now, we'll return a mock response.
+        await asyncio.sleep(1)
+        return "User provided more details." # Mock response
 
     async def provide_contextual_assistance(self, user_input: str, current_task: Dict[str, Any]) -> Optional[str]:
         """
@@ -105,8 +113,9 @@ class HumanAITeaming:
         """Returns statistics about the Human-AI Teaming Engine's activity."""
         return {
             "enabled": self.enabled,
-            "clarification_threshold": self.clarification_threshold,
             "adaptive_communication_enabled": self.adaptive_communication_enabled,
-            "last_adaptation_timestamp": datetime.now().isoformat(),
-            "total_clarifications_issued": 0 # Placeholder
+            "clarification_threshold": self.clarification_threshold,
+            "clarification_requests_sent": self._clarification_requests_sent,
+            "communication_adaptations_made": self._communication_adaptations_made,
+            "last_updated": datetime.now().isoformat()
         }

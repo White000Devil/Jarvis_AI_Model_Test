@@ -1,34 +1,25 @@
-#!/usr/bin/env python3
-"""
-Jarvis AI Assistant - Main Entry Point
-Phase 0: Basic setup and initialization
-Phase 1: Chat mode implementation
-Phase 2: Video learning capabilities
-Phase 3: Self-learning and feedback
-Phase 4: Voice commands, API integrations, Collaboration Hub, and Deployment Manager
-Phase 5: Ethical AI, Advanced Reasoning, Human-AI Teaming, and Self-Correction
-"""
-
-import argparse
 import asyncio
-import sys
+import argparse
+import yaml
 from pathlib import Path
-import os
+from typing import Dict, Any, Optional
 
-# Add project root to path
-sys.path.append(str(Path(__file__).parent))
+# Ensure project root is in sys.path for imports
+PROJECT_ROOT = Path(__file__).parent.parent
+import sys
+sys.path.append(str(PROJECT_ROOT))
 
-from scripts.setup_environment import load_config, setup_directories
 from utils.logger import setup_logging, logger
+from scripts.setup_environment import setup_environment, load_config
 
-# Import all core components
+# Import all core engines
 from core.nlp_engine import NLPEngine
 from core.memory_manager import MemoryManager
-from core.api_integrations import APIIntegrations
 from core.vision_engine import VisionEngine
 from core.knowledge_integrator import KnowledgeIntegrator
 from core.self_learning import SelfLearningEngine
 from core.voice_interface import VoiceInterface
+from core.api_integrations import APIIntegrations
 from core.collaboration_hub import CollaborationHub
 from core.deployment_manager import DeploymentManager
 from core.ethical_ai import EthicalAIEngine
@@ -36,186 +27,181 @@ from core.reasoning_engine import ReasoningEngine
 from core.human_ai_teaming import HumanAITeaming
 from core.self_correction import SelfCorrectionEngine
 
-# Import all interface components
+# Import all UI interfaces
 from interface.chat_interface import ChatInterface
 from interface.vision.video_ui import VideoUI
 from interface.learning.feedback_ui import FeedbackUI
-from interface.admin.admin_dashboard import create_admin_dashboard # Import the function
+from interface.admin.admin_dashboard import create_admin_dashboard # Function to create dashboard
 
 class JarvisAI:
     """
-    Main class for the JARVIS AI Assistant, integrating all core components.
+    The main orchestrator for the JARVIS AI Assistant.
+    Initializes and manages all core engines and interfaces.
     """
-    def __init__(self, config: dict):
+    def __init__(self, config: Dict[str, Any]):
         self.config = config
+        self.debug_mode = config.get("app", {}).get("debug", False)
         
-        # Initialize core components
-        self.nlp_engine = NLPEngine(self.config)
-        self.memory_manager = MemoryManager(self.config)
-        self.api_integrations = APIIntegrations(self.config)
-        self.vision_engine = VisionEngine(self.config)
-        self.knowledge_integrator = KnowledgeIntegrator(self.config, self.memory_manager)
-        self.self_learning_engine = SelfLearningEngine(self.memory_manager, self.config)
-        self.voice_interface = VoiceInterface(self.config)
-        self.collaboration_hub = CollaborationHub(self.config)
-        self.deployment_manager = DeploymentManager(self.config)
-        
-        # Initialize Phase 5 components
-        self.ethical_ai_engine = EthicalAIEngine(self.memory_manager, self.config)
+        # Initialize core engines
+        self.nlp_engine = NLPEngine(config.get("nlp", {}))
+        self.memory_manager = MemoryManager(config.get("memory", {}))
+        self.api_integrations = APIIntegrations(config.get("api_integrations", {}))
+        self.vision_engine = VisionEngine(config.get("vision", {}))
+        self.knowledge_integrator = KnowledgeIntegrator(config.get("learning", {}), self.memory_manager)
+        self.self_learning_engine = SelfLearningEngine(self.memory_manager, config.get("learning", {}))
+        self.voice_interface = VoiceInterface(config.get("voice", {}))
+        self.collaboration_hub = CollaborationHub(config.get("collaboration", {}))
+        self.deployment_manager = DeploymentManager(config.get("deployment", {}))
+        self.ethical_ai_engine = EthicalAIEngine(self.memory_manager, config.get("ethical_ai", {}))
         self.reasoning_engine = ReasoningEngine(
             self.nlp_engine, self.memory_manager, self.api_integrations,
-            self.vision_engine, self.ethical_ai_engine, self.config
+            self.vision_engine, self.ethical_ai_engine, config.get("reasoning", {})
         )
         self.human_ai_teaming = HumanAITeaming(
-            self.nlp_engine, self.memory_manager, self.collaboration_hub, self.config
+            self.nlp_engine, self.memory_manager, self.collaboration_hub, config.get("human_ai_teaming", {})
         )
         self.self_correction_engine = SelfCorrectionEngine(
-            self.nlp_engine, self.memory_manager, self.ethical_ai_engine, self.config
+            self.nlp_engine, self.memory_manager, self.ethical_ai_engine, config.get("self_correction", {})
         )
 
-        logger.info("JARVIS AI core components initialized.")
+        logger.info("All JARVIS AI core engines initialized.")
 
-    async def chat(self, user_query: str) -> str:
+    async def chat(self, user_input: str) -> str:
         """
-        Processes a user query through the entire JARVIS AI pipeline.
+        Processes a user's chat input through the entire JARVIS pipeline.
         """
-        logger.info(f"User: {user_query}")
-        
-        context = {"user_id": "test_user", "session_id": "test_session"} # Example context
+        logger.info(f"Processing chat input: '{user_input}'")
         
         # 1. NLP Processing
-        nlp_result = await self.nlp_engine.process_query(user_query, context)
-        jarvis_response_content = nlp_result["content"]
-        jarvis_response_metadata = nlp_result["metadata"]
+        nlp_result = await self.nlp_engine.process_query(user_input)
+        intent = nlp_result["metadata"]["intent"]
+        confidence = nlp_result["metadata"]["confidence"]
         
-        # 2. Reasoning Engine (if enabled)
-        if self.config.get("REASONING_ENABLED", False):
-            reasoning_output = await self.reasoning_engine.reason_on_query(user_query, context)
-            jarvis_response_content = reasoning_output["response"] # Use reasoning's refined response
-            logger.debug(f"Reasoning steps: {reasoning_output['reasoning_steps']}")
-            logger.debug(f"Final plan: {reasoning_output['final_plan']}")
-
-        # 3. Ethical AI Check
-        is_ethical, violations = await self.ethical_ai_engine.check_response_for_ethics(user_query, jarvis_response_content, context)
-        if not is_ethical:
-            jarvis_response_content = await self.ethical_ai_engine.apply_ethical_guardrails(user_query, jarvis_response_content, violations)
-            logger.warning("Ethical guardrails applied to response.")
-
-        # 4. Human-AI Teaming (Clarification/Adaptation)
-        clarification_needed = await self.human_ai_teaming.clarify_request(user_query, jarvis_response_metadata, context)
+        # 2. Human-AI Teaming: Clarification
+        clarification_needed = await self.human_ai_teaming.clarify_request(user_input, confidence, nlp_result["metadata"])
         if clarification_needed:
-            jarvis_response_content = clarification_needed
-            logger.info("JARVIS seeking clarification.")
-        else:
-            jarvis_response_content = await self.human_ai_teaming.adapt_communication(user_query, jarvis_response_content, context)
-            logger.debug("JARVIS adapted communication style.")
+            return clarification_needed
 
-        # 5. Self-Correction (Post-response assessment)
-        if self.config.get("SELF_CORRECTION_ENABLED", False):
-            confidence = await self.self_correction_engine.assess_confidence(jarvis_response_metadata, context)
-            if confidence < self.config.get("CONFIDENCE_THRESHOLD_FOR_CORRECTION", 0.6):
-                logger.warning(f"Low confidence ({confidence:.2f}) detected. Triggering self-correction.")
-                jarvis_response_content = await self.self_correction_engine.propose_correction(user_query, jarvis_response_content, ["low_confidence"])
-            
-            # Example of inconsistency check (requires more sophisticated logic)
-            # inconsistency_score = await self.self_correction_engine.detect_inconsistency(jarvis_response_content, await self.memory_manager.search_conversations(user_query, limit=5))
-            # if inconsistency_score > 0.7:
-            #     logger.warning(f"Inconsistency detected ({inconsistency_score:.2f}). Triggering self-correction.")
-            #     jarvis_response_content = await self.self_correction_engine.propose_correction(user_query, jarvis_response_content, ["inconsistency"])
-
-        # 6. Store conversation in Memory
-        await self.memory_manager.add_conversation(user_query, jarvis_response_content, jarvis_response_metadata)
+        # 3. Reasoning Engine: Formulate a plan/response
+        reasoning_context = {
+            "nlp_confidence": confidence,
+            "user_role": "admin" # Example: could be dynamic based on auth
+        }
+        reasoning_output = await self.reasoning_engine.reason_on_query(user_input, nlp_result, reasoning_context)
+        jarvis_response = reasoning_output["response"]
         
-        logger.info(f"JARVIS: {jarvis_response_content}")
-        return jarvis_response_content
+        # 4. Ethical AI: Check and apply guardrails
+        is_ethical, violations = await self.ethical_ai_engine.check_response_for_ethics(user_input, jarvis_response, reasoning_output)
+        if not is_ethical:
+            jarvis_response = await self.ethical_ai_engine.apply_ethical_guardrails(user_input, jarvis_response, violations)
+            logger.warning(f"Ethical guardrails applied to response: {jarvis_response}")
 
-    async def run_ui(self, mode: str):
-        """Runs the appropriate Gradio UI based on the mode."""
-        if mode == "chat":
-            chat_ui = ChatInterface(self)
-            interface = chat_ui.create_interface()
-            logger.info("Launching Chat Interface...")
-        elif mode == "vision":
-            vision_ui = VideoUI(self.vision_engine)
-            interface = vision_ui.create_interface()
-            logger.info("Launching Video Analysis UI...")
-        elif mode == "learning":
-            feedback_ui = FeedbackUI(self.self_learning_engine)
-            interface = feedback_ui.create_interface()
-            logger.info("Launching Self-Learning & Feedback UI...")
-        elif mode == "admin":
-            # Pass all necessary engine instances to the admin dashboard creator
-            interface = create_admin_dashboard(
-                self.nlp_engine,
-                self.memory_manager,
-                self.api_integrations,
-                self.vision_engine,
-                self.ethical_ai_engine,
-                self.reasoning_engine,
-                self.human_ai_teaming,
-                self.self_correction_engine,
-                self.self_learning_engine, # Pass learning engine
-                self.collaboration_hub, # Pass collaboration hub
-                self.deployment_manager, # Pass deployment manager
-                self.voice_interface # Pass voice interface
-            )
-            logger.info("Launching Admin Dashboard...")
-        else:
-            logger.error(f"Unknown UI mode: {mode}")
-            sys.exit(1)
+        # 5. Self-Correction: Assess and correct if needed
+        response_confidence = await self.self_correction_engine.assess_confidence(jarvis_response, {"nlp_confidence": confidence})
+        if response_confidence < self.self_correction_engine.confidence_threshold:
+            # Simulate searching memory for conflicting info
+            historical_context = await self.memory_manager.search_conversations(user_input, limit=3)
+            is_inconsistent, inconsistency_explanation = await self.self_correction_engine.detect_inconsistency(jarvis_response, historical_context)
+            
+            if is_inconsistent:
+                logger.warning(f"Inconsistency detected: {inconsistency_explanation}. Attempting self-correction.")
+                jarvis_response = await self.self_correction_engine.propose_correction(
+                    original_response=jarvis_response,
+                    error_explanation=inconsistency_explanation,
+                    user_input=user_input,
+                    context={"nlp_result": nlp_result, "reasoning_output": reasoning_output}
+                )
+            else:
+                logger.info(f"Response confidence {response_confidence:.2f} is low, but no inconsistency detected. Proceeding.")
 
-        interface.launch(
+        # 6. Human-AI Teaming: Adapt communication style
+        jarvis_response = await self.human_ai_teaming.adapt_communication(user_input, jarvis_response, {"user_sentiment": nlp_result["metadata"].get("sentiment_label", "neutral")})
+
+        # 7. Memory Management: Store conversation
+        await self.memory_manager.add_conversation(user_input, jarvis_response, nlp_result["metadata"])
+
+        logger.info(f"Final JARVIS response: '{jarvis_response}'")
+        return jarvis_response
+
+    async def run_chat_interface(self):
+        """Runs the Gradio chat interface."""
+        chat_ui = ChatInterface(self).create_interface()
+        logger.info("Launching Chat Interface...")
+        chat_ui.launch(
             server_name="0.0.0.0",
-            server_port=7860 if mode == "chat" else (7861 if mode == "vision" else (7862 if mode == "admin" else 7863)),
+            server_port=7860, # Default Gradio port
             share=False,
-            debug=True
+            debug=self.debug_mode
+        )
+
+    async def run_admin_dashboard(self):
+        """Runs the Gradio admin dashboard."""
+        admin_dashboard_ui = create_admin_dashboard(
+            self.nlp_engine, self.memory_manager, self.api_integrations,
+            self.vision_engine, self.ethical_ai_engine, self.reasoning_engine,
+            self.human_ai_teaming, self.self_correction_engine,
+            self.self_learning_engine, self.collaboration_hub, self.deployment_manager,
+            self.voice_interface
+        )
+        logger.info("Launching Admin Dashboard...")
+        admin_dashboard_ui.launch(
+            server_name="0.0.0.0",
+            server_port=7862,
+            share=False,
+            debug=self.debug_mode
+        )
+
+    async def run_vision_ui(self):
+        """Runs the Gradio video analysis UI."""
+        vision_ui = VideoUI(self.vision_engine).create_interface()
+        logger.info("Launching Vision UI...")
+        vision_ui.launch(
+            server_name="0.0.0.0",
+            server_port=7861,
+            share=False,
+            debug=self.debug_mode
+        )
+
+    async def run_learning_ui(self):
+        """Runs the Gradio feedback and learning UI."""
+        learning_ui = FeedbackUI(self.self_learning_engine).create_interface()
+        logger.info("Launching Learning UI...")
+        learning_ui.launch(
+            server_name="0.0.0.0",
+            server_port=7863,
+            share=False,
+            debug=self.debug_mode
         )
 
 async def main():
     parser = argparse.ArgumentParser(description="JARVIS AI Assistant")
     parser.add_argument("--mode", type=str, default="chat",
-                        help="Operation mode: 'chat', 'vision', 'learning', 'admin', or 'test'.")
-    parser.add_argument("--test_phase", type=int,
-                        help="Specify which phase to test (1-5) if mode is 'test'.")
-    
+                        choices=["chat", "admin", "vision", "learning"],
+                        help="Mode to run JARVIS AI in (chat, admin, vision, learning)")
     args = parser.parse_args()
 
     # Load configuration
     config = load_config()
-    
+
     # Setup logging based on config
-    setup_logging(debug=(config.get("LOG_LEVEL", "INFO").upper() == "DEBUG"))
+    setup_logging(debug=config.get("app", {}).get("debug", False))
     logger.info(f"Starting JARVIS AI in {args.mode} mode...")
 
-    # Ensure necessary directories exist
-    setup_directories(config)
+    # Ensure environment is set up (directories, dummy env vars)
+    setup_environment()
 
-    if args.mode == "test":
-        if args.test_phase is None:
-            logger.error("Please specify --test_phase (1-5) when using --mode test.")
-            sys.exit(1)
-        
-        if args.test_phase == 1:
-            from scripts.test_phase1 import test_phase1
-            await test_phase1()
-        elif args.test_phase == 2:
-            from scripts.test_phase2 import test_phase2
-            await test_phase2()
-        elif args.test_phase == 3:
-            from scripts.test_phase3 import test_phase3
-            await test_phase3()
-        elif args.test_phase == 4:
-            from scripts.test_phase4 import test_phase4
-            await test_phase4()
-        elif args.test_phase == 5:
-            from scripts.test_phase5 import test_phase5
-            await test_phase5()
-        else:
-            logger.error(f"Invalid test phase: {args.test_phase}. Choose between 1 and 5.")
-            sys.exit(1)
+    jarvis = JarvisAI(config)
+
+    if args.mode == "chat":
+        await jarvis.run_chat_interface()
+    elif args.mode == "admin":
+        await jarvis.run_admin_dashboard()
+    elif args.mode == "vision":
+        await jarvis.run_vision_ui()
+    elif args.mode == "learning":
+        await jarvis.run_learning_ui()
     else:
-        jarvis = JarvisAI(config)
-        await jarvis.run_ui(args.mode)
+        logger.error(f"Unknown mode: {args.mode}")
 
 if __name__ == "__main__":
     asyncio.run(main())
