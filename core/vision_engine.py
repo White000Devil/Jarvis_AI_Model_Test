@@ -1,125 +1,186 @@
 import cv2
 import numpy as np
 from typing import Dict, Any, List
-from pathlib import Path
-from datetime import datetime
-import json
 from utils.logger import logger
+import os
+import asyncio
+import json
+from datetime import datetime, timedelta # Added timedelta for simulated events
 
 class VisionEngine:
     """
-    Core Vision Engine for JARVIS AI.
-    Handles video analysis, object detection, and anomaly detection in visual data.
+    Handles computer vision tasks for JARVIS AI, including object detection,
+    facial recognition (placeholder), and video analysis.
     """
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.vision_enabled = config.get("VISION_ENABLED", False)
-        self.model_name = config.get("VISION_MODEL", "yolo-v8-nano")
-        self.cache_size_mb = config.get("VIDEO_ANALYSIS_CACHE_SIZE_MB", 500)
-        self.models_loaded = False
-        self.recording_active = False # Placeholder for future live recording feature
+        self.enabled = config.get("enabled", False)
+        self.model_name = config.get("model_name", "yolo-v8-nano") # Example: YOLO model
+        self.cache_dir = config.get("cache_dir", "data/vision_cache")
+        self.video_analysis_cache_size_mb = config.get("video_analysis_cache_size_mb", 500)
 
-        if self.vision_enabled:
-            self._load_models()
-            logger.info(f"Vision Engine initialized with model: {self.model_name}")
+        if self.enabled:
+            # Placeholder for loading a real vision model (e.g., YOLO, MediaPipe)
+            try:
+                # Simulate model loading
+                logger.info(f"Simulating loading vision model: {self.model_name}...")
+                # self.model = load_yolo_model(self.model_name) # Actual model loading
+                self.model = True # Dummy model
+                logger.info("Vision Engine initialized and model loaded (simulated).")
+            except Exception as e:
+                logger.error(f"Failed to load vision model {self.model_name}: {e}. Vision features will be disabled.")
+                self.enabled = False
         else:
             logger.info("Vision Engine is disabled in configuration.")
 
-    def _load_models(self):
+        os.makedirs(self.cache_dir, exist_ok=True)
+        self._clean_cache() # Clean cache on startup
+
+    def _clean_cache(self):
+        """Cleans up old video analysis cache files if size exceeds limit."""
+        current_size = 0
+        files = []
+        for dirpath, _, filenames in os.walk(self.cache_dir):
+            for f in filenames:
+                fp = os.path.join(dirpath, f)
+                if os.path.isfile(fp):
+                    f_size = os.path.getsize(fp)
+                    files.append((f_size, fp))
+                    current_size += f_size
+        
+        files.sort(key=lambda x: os.path.getmtime(x[1])) # Sort by modification time (oldest first)
+
+        bytes_to_mb = 1024 * 1024
+        if current_size / bytes_to_mb > self.video_analysis_cache_size_mb:
+            logger.info(f"Vision cache size ({current_size / bytes_to_mb:.2f}MB) exceeds limit ({self.video_analysis_cache_size_mb}MB). Cleaning...")
+            while current_size / bytes_to_mb > self.video_analysis_cache_size_mb * 0.8 and files: # Reduce to 80% of limit
+                size, path = files.pop(0)
+                try:
+                    os.remove(path)
+                    current_size -= size
+                    logger.debug(f"Removed old cache file: {path}")
+                except Exception as e:
+                    logger.warning(f"Could not remove cache file {path}: {e}")
+            logger.info(f"Vision cache cleaned. New size: {current_size / bytes_to_mb:.2f}MB")
+
+    async def analyze_image(self, image_path: str) -> Dict[str, Any]:
         """
-        Loads pre-trained computer vision models (e.g., YOLO for object detection).
-        This is a placeholder for actual model loading.
+        Performs object detection and other analysis on a static image.
         """
+        if not self.enabled or not self.model:
+            return {"status": "disabled", "message": "Vision engine is not enabled or model not loaded."}
+
+        logger.info(f"Analyzing image: {image_path}")
         try:
-            # Simulate loading a model
-            logger.info(f"Simulating loading vision model: {self.model_name}...")
-            # In a real scenario, you'd load models using libraries like
-            # TensorFlow, PyTorch, or OpenCV's DNN module.
-            # Example: self.model = cv2.dnn.readNetFromDarknet(cfg_path, weights_path)
-            self.models_loaded = True
-            logger.info(f"Vision model '{self.model_name}' simulated loaded successfully.")
+            # Simulate image loading and processing
+            # img = cv2.imread(image_path)
+            # results = self.model.predict(img) # Actual model prediction
+            await asyncio.sleep(1) # Simulate processing time
+
+            # Mock results
+            mock_objects = [
+                {"label": "person", "confidence": 0.95, "bbox": [10, 20, 100, 200]},
+                {"label": "laptop", "confidence": 0.88, "bbox": [50, 60, 150, 120]}
+            ]
+            logger.info(f"Image analysis complete for {image_path}. Found {len(mock_objects)} objects.")
+            return {"status": "success", "objects": mock_objects, "timestamp": datetime.now().isoformat()}
         except Exception as e:
-            logger.error(f"Failed to load vision model {self.model_name}: {e}")
-            self.models_loaded = False
+            logger.error(f"Error analyzing image {image_path}: {e}")
+            return {"status": "error", "message": str(e)}
 
-    async def analyze_video(self, video_path: str) -> Dict[str, Any]:
+    async def analyze_video_stream(self, video_stream_url: str, duration_seconds: int = 10) -> Dict[str, Any]:
         """
-        Analyzes a video file for objects, events, or anomalies.
-        This is a simplified mock implementation.
+        Analyzes a live video stream for objects, activities, etc.
+        This is a simplified simulation.
         """
-        if not self.vision_enabled:
-            return {"status": "failed", "reason": "Vision engine is disabled."}
-        if not self.models_loaded:
-            return {"status": "failed", "reason": "Vision models not loaded."}
+        if not self.enabled or not self.model:
+            return {"status": "disabled", "message": "Vision engine is not enabled or model not loaded."}
 
-        video_file = Path(video_path)
-        if not video_file.exists():
-            logger.error(f"Video file not found: {video_path}")
-            return {"status": "failed", "reason": "Video file not found."}
+        logger.info(f"Analyzing video stream: {video_stream_url} for {duration_seconds} seconds.")
+        
+        # Simulate connecting to stream and processing frames
+        # cap = cv2.VideoCapture(video_stream_url)
+        # if not cap.isOpened():
+        #     logger.error(f"Could not open video stream: {video_stream_url}")
+        #     return {"status": "error", "message": "Could not open video stream."}
 
-        logger.info(f"Starting analysis of video: {video_path}")
+        detected_events = []
         start_time = datetime.now()
+        
+        # Simulate processing frames over time
+        for i in range(duration_seconds):
+            # ret, frame = cap.read()
+            # if not ret:
+            #     break
+            # results = self.model.predict(frame)
+            # Process results...
+            if i % 3 == 0: # Simulate an event every 3 seconds
+                event = {"timestamp": (start_time + timedelta(seconds=i)).isoformat(), "event": "person_detected", "location": "entrance"}
+                detected_events.append(event)
+                logger.debug(f"Detected event: {event['event']} at {event['timestamp']}")
+            await asyncio.sleep(1) # Simulate real-time processing delay
 
-        try:
-            # Simulate video processing
-            cap = cv2.VideoCapture(str(video_file))
-            if not cap.isOpened():
-                logger.error(f"Could not open video file: {video_path}")
-                return {"status": "failed", "reason": "Could not open video file."}
+        # cap.release()
+        logger.info(f"Video stream analysis complete for {video_stream_url}. Detected {len(detected_events)} events.")
+        return {"status": "success", "events": detected_events, "timestamp": datetime.now().isoformat()}
 
-            frame_count = 0
-            detected_objects = {}
-            anomalies_detected = False
+    async def facial_recognition(self, image_path: str) -> Dict[str, Any]:
+        """
+        Performs simulated facial recognition on an image.
+        """
+        if not self.enabled or not self.model:
+            return {"status": "disabled", "message": "Vision engine is not enabled or model not loaded."}
 
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                frame_count += 1
+        logger.info(f"Performing simulated facial recognition on: {image_path}")
+        await asyncio.sleep(1.5) # Simulate processing time
 
-                # Simulate object detection (e.g., person, vehicle, suspicious object)
-                if frame_count % 10 == 0: # Process every 10th frame
-                    # Dummy detection logic
-                    if "security_footage" in video_path:
-                        if frame_count > 50 and frame_count < 100:
-                            detected_objects["person"] = detected_objects.get("person", 0) + 1
-                        if frame_count > 150 and frame_count < 200:
-                            detected_objects["unauthorized_access"] = detected_objects.get("unauthorized_access", 0) + 1
-                            anomalies_detected = True
-                    elif "network_traffic" in video_path:
-                        if frame_count % 30 == 0:
-                            detected_objects["data_packet"] = detected_objects.get("data_packet", 0) + 1
-                        if frame_count > 100 and frame_count < 120:
-                            anomalies_detected = True # Simulate a network anomaly
+        # Mock results
+        mock_faces = [
+            {"name": "John Doe", "confidence": 0.98, "bbox": [100, 100, 200, 200]},
+            {"name": "Jane Smith", "confidence": 0.92, "bbox": [300, 150, 400, 250]}
+        ]
+        logger.info(f"Facial recognition complete for {image_path}. Found {len(mock_faces)} faces.")
+        return {"status": "success", "faces": mock_faces, "timestamp": datetime.now().isoformat()}
 
-            cap.release()
-            end_time = datetime.now()
-            analysis_duration = (end_time - start_time).total_seconds()
+    async def process_video_file(self, video_file_path: str) -> Dict[str, Any]:
+        """
+        Processes a local video file for analysis.
+        """
+        if not self.enabled or not self.model:
+            return {"status": "disabled", "message": "Vision engine is not enabled or model not loaded."}
 
-            result = {
-                "status": "completed",
-                "video_path": video_path,
-                "total_frames": frame_count,
-                "analysis_duration_seconds": analysis_duration,
-                "detected_objects": detected_objects,
-                "anomalies_detected": anomalies_detected,
-                "summary": f"Analyzed {frame_count} frames. Detected {sum(detected_objects.values())} objects. Anomalies: {anomalies_detected}.",
-                "timestamp": datetime.now().isoformat()
-            }
-            logger.info(f"Video analysis completed for {video_path}. Status: {result['status']}")
-            return result
+        logger.info(f"Processing video file: {video_file_path}")
+        
+        # Simulate video file processing
+        # cap = cv2.VideoCapture(video_file_path)
+        # if not cap.isOpened():
+        #     logger.error(f"Could not open video file: {video_file_path}")
+        #     return {"status": "error", "message": "Could not open video file."}
+        
+        # frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        # fps = cap.get(cv2.CAP_PROP_FPS)
+        # duration = frame_count / fps if fps > 0 else 0
 
-        except Exception as e:
-            logger.error(f"Error during video analysis of {video_path}: {e}")
-            return {"status": "failed", "reason": str(e)}
+        detected_objects_over_time = []
+        
+        # Simulate processing frames
+        for i in range(5): # Process 5 simulated frames
+            # ret, frame = cap.read()
+            # if not ret:
+            #     break
+            # results = self.model.predict(frame)
+            # Process results...
+            mock_objects = [
+                {"label": "car", "confidence": 0.85},
+                {"label": "truck", "confidence": 0.70}
+            ]
+            detected_objects_over_time.append({
+                "frame": i,
+                "timestamp": (datetime.now() + timedelta(seconds=i)).isoformat(),
+                "objects": mock_objects
+            })
+            await asyncio.sleep(0.5) # Simulate frame processing time
 
-    def get_vision_stats(self) -> Dict[str, Any]:
-        """Returns statistics about the vision engine's status."""
-        return {
-            "enabled": self.vision_enabled,
-            "models_loaded": self.models_loaded,
-            "model_name": self.model_name,
-            "cache_size": f"{self.cache_size_mb}MB (mock)", # Placeholder for actual cache usage
-            "recording_active": self.recording_active,
-            "last_analysis_timestamp": datetime.now().isoformat() # Placeholder
-        }
+        # cap.release()
+        logger.info(f"Video file processing complete for {video_file_path}. Detected objects in {len(detected_objects_over_time)} frames.")
+        return {"status": "success", "analysis_results": detected_objects_over_time, "timestamp": datetime.now().isoformat()}

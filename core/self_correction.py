@@ -10,147 +10,183 @@ from core.ethical_ai import EthicalAIEngine # Assuming EthicalAIEngine is availa
 
 class SelfCorrectionEngine:
     """
-    Enables JARVIS AI to detect and correct its own inconsistencies, errors,
-    or suboptimal responses based on internal confidence, external feedback,
-    and ethical guidelines.
+    Enables JARVIS AI to detect and correct its own errors, inconsistencies,
+    or low-confidence responses.
     """
-    def __init__(self, nlp_engine: NLPEngine, memory_manager: MemoryManager,
-                 ethical_ai_engine: EthicalAIEngine, config: Dict[str, Any]):
+    def __init__(self, nlp_engine: NLPEngine, memory_manager: MemoryManager, ethical_ai_engine: EthicalAIEngine, config: Dict[str, Any]):
         self.config = config
         self.nlp_engine = nlp_engine
         self.memory_manager = memory_manager
         self.ethical_ai_engine = ethical_ai_engine
-        
-        self.enabled = config.get("SELF_CORRECTION_ENABLED", True)
-        self.confidence_threshold = config.get("CONFIDENCE_THRESHOLD_FOR_CORRECTION", 0.6) # Below this, consider correction
-        self.inconsistency_threshold = config.get("INCONSISTENCY_THRESHOLD", 0.3) # For detecting conflicting info
-        self.log_corrections = config.get("LOG_CORRECTIONS", True)
-        self.self_correction_log_path = Path(config.get("SELF_CORRECTION_LOG_PATH", "data/self_correction_log/corrections.jsonl"))
-
-        self._total_correction_attempts = 0
-        self._successful_corrections = 0
-        self._failed_corrections = 0
+        self.enabled = config.get("enabled", True)
+        self.confidence_threshold = config.get("confidence_threshold", 0.6) # Confidence below which JARVIS will attempt self-correction
+        self.inconsistency_threshold = config.get("inconsistency_threshold", 0.3) # Threshold for detecting inconsistency
+        self.log_corrections = config.get("log_corrections", True)
+        self.self_correction_log_path = Path(config.get("self_correction_log_path", "data/self_correction_log/corrections.jsonl"))
+        self.recent_corrections: List[Dict[str, Any]] = [] # In-memory cache for recent corrections
 
         if self.enabled:
             logger.info("Self-Correction Engine initialized.")
         else:
-            logger.warning("Self-Correction Engine is disabled in configuration.")
+            logger.info("Self-Correction Engine is disabled in configuration.")
 
     async def assess_confidence(self, jarvis_response: str, context: Dict[str, Any]) -> float:
         """
-        Assesses the confidence of JARVIS's own response.
-        This can be based on NLP confidence, reasoning certainty, or external feedback.
+        Assesses the confidence level of JARVIS's response.
+        This is a simplified assessment based on NLP confidence.
+        In a real system, this would involve multiple factors (e.g., model certainty, data freshness).
         """
         if not self.enabled:
-            return 1.0 # Assume full confidence if disabled
+            return 1.0 # Full confidence if disabled
 
-        # Use NLP confidence as a primary factor
-        nlp_confidence = context.get("nlp_confidence", 0.0)
+        logger.info(f"Assessing confidence for response: '{jarvis_response[:50]}...'")
         
-        # Simulate other factors (e.g., consistency with memory, complexity of task)
-        # For simplicity, we'll just use NLP confidence for now.
+        # Example: Use NLP confidence from initial processing as a base
+        nlp_confidence = context.get("nlp_confidence", 0.5)
         
-        logger.debug(f"Assessed confidence for response '{jarvis_response[:50]}...': {nlp_confidence:.2f}")
-        return nlp_confidence
+        # Simple rules to adjust confidence
+        if "I'm sorry" in jarvis_response or "I cannot" in jarvis_response:
+            nlp_confidence *= 0.8 # Lower confidence if JARVIS is apologetic or refusing
+        if "I'm not sure" in jarvis_response:
+            nlp_confidence *= 0.7
+        if "I understand" in jarvis_response:
+            nlp_confidence *= 1.1 # Slightly higher if showing understanding
+
+        # If the response was ethically guarded, confidence might be lower on the original intent
+        if context.get("ethical_guardrail_applied", False):
+            nlp_confidence *= 0.9 # Indicate that the original response might have been problematic
+
+        confidence_score = min(1.0, max(0.0, nlp_confidence)) # Keep between 0 and 1
+        logger.info(f"Response confidence assessed: {confidence_score:.2f}")
+        return confidence_score
 
     async def detect_inconsistency(self, jarvis_response: str, historical_context: List[Dict[str, Any]]) -> Tuple[bool, Optional[str]]:
         """
-        Detects if the current response is inconsistent with past knowledge or interactions.
-        Returns (is_inconsistent, explanation).
+        Detects inconsistencies between the current response and historical knowledge/conversations.
+        This is a simplified check.
         """
         if not self.enabled:
             return False, None
 
-        # Simulate inconsistency detection
-        # This would involve comparing the current response with relevant past conversations or knowledge articles.
-        # For example, if JARVIS previously stated X, and now states Y, and X and Y are contradictory.
+        logger.debug(f"Detecting inconsistency for response: '{jarvis_response[:50]}...'")
         
-        response_lower = jarvis_response.lower()
-        
-        # Simple mock inconsistency: if response contains "error" and context implies success
-        if "error" in response_lower and any("success" in h.get("document", "").lower() for h in historical_context):
-            return True, "Response contains 'error' but historical context indicates success."
-        
-        # Another mock: if response contradicts a known fact from memory
-        if "paris is the capital of germany" in response_lower:
-            return True, "Response contradicts known geographical fact."
+        inconsistency_score = 0.0
+        explanation = None
 
-        return False, None
+        # Example: Check if the current response contradicts a recent conversation
+        for past_conv in historical_context:
+            past_doc = past_conv.get("document", "").lower()
+            if "jarvis:" in past_doc:
+                past_jarvis_response = past_doc.split("jarvis:", 1)[1].strip()
+                
+                # Very basic keyword-based contradiction detection
+                if "sql injection is a code injection" in past_jarvis_response and "sql injection is not a code injection" in jarvis_response.lower():
+                    inconsistency_score = 0.9
+                    explanation = "Direct contradiction with past statement about SQL injection."
+                    break
+                elif "sunny" in past_jarvis_response and "rainy" in jarvis_response.lower() and "weather" in past_doc:
+                    # This would need to check timestamps to be valid (e.g., weather changes)
+                    # For now, just a simple example
+                    inconsistency_score = 0.5
+                    explanation = "Potential contradiction in weather information."
+                    break
+        
+        is_inconsistent = inconsistency_score > self.inconsistency_threshold
+        if is_inconsistent:
+            logger.warning(f"Inconsistency detected (score: {inconsistency_score:.2f}): {explanation}")
+        
+        return is_inconsistent, explanation
 
     async def propose_correction(self, original_response: str, error_explanation: str, user_input: str, context: Dict[str, Any]) -> str:
         """
         Proposes a corrected response based on detected errors or inconsistencies.
         """
-        self._total_correction_attempts += 1
-        logger.info(f"Proposing correction for: '{original_response[:50]}...' due to: {error_explanation}")
+        if not self.enabled:
+            return original_response
+
+        logger.info(f"Proposing self-correction for response: '{original_response[:50]}...' due to: {error_explanation}")
         
         corrected_response = original_response
         
-        # Simulate correction logic
-        if "paris is the capital of germany" in original_response.lower():
-            corrected_response = "Correction: The capital of Germany is Berlin. Paris is the capital of France."
-            self._successful_corrections += 1
-        elif "error" in error_explanation:
-            corrected_response = f"I apologize for the previous error. Let me re-evaluate: [Re-evaluated response based on user input and context]."
-            self._successful_corrections += 1
-        else:
-            corrected_response = f"Upon review, I'd like to refine my previous statement: {original_response}. {error_explanation}"
-            self._failed_corrections += 1 # Could be a failed attempt if not a clear correction
+        # Example correction logic:
+        if "Direct contradiction" in error_explanation:
+            corrected_response = f"My apologies, I seem to have provided conflicting information. To clarify: {user_input}. Let me re-evaluate."
+            # In a real system, re-run reasoning or fetch correct info
+        elif "Potential contradiction in weather" in error_explanation:
+            corrected_response = f"My apologies, weather information can change rapidly. Let me get the most up-to-date weather for you."
+            # Trigger a new weather API call
+        elif "low confidence" in error_explanation.lower():
+            corrected_response = f"I'm not entirely confident in my previous response. Let me try to provide a more accurate answer. {original_response}"
+            # This could trigger a more detailed reasoning process or a search in memory
 
+        # Log the correction
         if self.log_corrections:
-            log_entry = {
+            log_data = {
                 "timestamp": datetime.now().isoformat(),
                 "user_input": user_input,
                 "original_response": original_response,
                 "corrected_response": corrected_response,
                 "error_explanation": error_explanation,
-                "status": "successful" if self._successful_corrections > (self._total_correction_attempts - self._successful_corrections) else "failed",
                 "context": context
             }
-            logger.info(json.dumps(log_entry), extra={"log_type": "self_correction"})
+            # Ensure the log directory exists
+            self.self_correction_log_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.self_correction_log_path, 'a') as f:
+                f.write(json.dumps(log_data) + '\n')
+            logger.info(f"Logged self-correction to {self.self_correction_log_path}")
 
         return corrected_response
 
-    async def explain_reasoning(self, user_input: str, jarvis_response: str, context: Dict[str, Any]) -> str:
-        """
-        Provides an explanation of JARVIS's reasoning process for a given response.
-        """
-        if not self.enabled:
-            return "Explanation feature is disabled."
-
-        reasoning_steps = context.get("reasoning_steps", ["No detailed reasoning steps available."])
-        final_plan = context.get("final_plan", "No specific plan.")
-        decisions = context.get("decisions", [])
-
-        explanation = f"My response to '{user_input}' was formulated as follows:\n\n"
-        explanation += "Reasoning Steps:\n"
-        for step in reasoning_steps:
-            explanation += f"- {step}\n"
-        
-        explanation += "\nKey Decisions Made:\n"
-        if decisions:
-            for decision in decisions:
-                explanation += f"- Type: {decision.get('type')}, Reason: {decision.get('reason', 'N/A')}\n"
-        else:
-            explanation += "- No specific decisions recorded.\n"
-        
-        explanation += f"\nMy final plan was to: {final_plan}\n"
-        explanation += f"\nThis led to the response: '{jarvis_response}'"
-
-        logger.info(f"Generated explanation for response to '{user_input[:50]}...'.")
-        return explanation
-
     def get_correction_stats(self) -> Dict[str, Any]:
-        """Returns statistics about self-correction activities."""
-        return {
-            "enabled": self.enabled,
-            "confidence_threshold": self.confidence_threshold,
-            "inconsistency_threshold": self.inconsistency_threshold,
-            "total_correction_attempts": self._total_correction_attempts,
-            "successful_corrections": self._successful_corrections,
-            "failed_corrections": self._failed_corrections,
-            "last_updated": datetime.now().isoformat()
+        """
+        Returns statistics about self-correction activities.
+        Reads from the self-correction log file.
+        """
+        stats = {"total_corrections": 0, "low_confidence_corrections": 0, "inconsistency_corrections": 0, "last_correction_timestamp": None}
+        
+        if self.self_correction_log_path.exists():
+            with open(self.self_correction_log_path, 'r') as f:
+                for line in f:
+                    try:
+                        data = json.loads(line)
+                        stats["total_corrections"] += 1
+                        if "low confidence" in data.get("error_explanation", "").lower():
+                            stats["low_confidence_corrections"] += 1
+                        if "inconsistency" in data.get("error_explanation", "").lower():
+                            stats["inconsistency_corrections"] += 1
+                        
+                        timestamp = data.get("timestamp")
+                        if timestamp:
+                            if not stats["last_correction_timestamp"] or timestamp > stats["last_correction_timestamp"]:
+                                stats["last_correction_timestamp"] = timestamp
+                    except json.JSONDecodeError:
+                        logger.warning(f"Skipping malformed self-correction log line: {line.strip()}")
+        
+        return stats
+
+    def _log_correction(self, user_input: str, original_response: str, corrected_response: str, reason: str, context: Dict[str, Any]):
+        """Logs a self-correction event to a file."""
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "user_input": user_input,
+            "original_response": original_response,
+            "corrected_response": corrected_response,
+            "reason": reason,
+            "context": context
         }
+        try:
+            with open(self.self_correction_log_path, "a") as f:
+                f.write(json.dumps(log_entry) + "\n")
+            self.recent_corrections.append(log_entry)
+            # Keep only the last N corrections in memory
+            self.recent_corrections = self.recent_corrections[-10:]
+            logger.info(f"Self-correction logged to {self.self_correction_log_path}")
+        except Exception as e:
+            logger.error(f"Failed to log self-correction: {e}")
+
+    def get_recent_corrections(self) -> List[Dict[str, Any]]:
+        """Returns a list of recent self-correction logs from memory."""
+        return self.recent_corrections
 
 # Test function for SelfCorrectionEngine
 async def test_self_correction_engine():
@@ -183,7 +219,7 @@ async def test_self_correction_engine():
     mock_memory = MockMemoryManager()
     mock_ethical = MockEthicalAIEngine()
 
-    correction_engine = SelfCorrectionEngine(mock_nlp, mock_memory, mock_ethical, config={"SELF_CORRECTION_ENABLED": True, "CONFIDENCE_THRESHOLD_FOR_CORRECTION": 0.7, "SELF_CORRECTION_LOG_PATH": "data/self_correction_log/corrections.jsonl"})
+    correction_engine = SelfCorrectionEngine(mock_nlp, mock_memory, mock_ethical, config={"enabled": True, "confidence_threshold": 0.7, "self_correction_log_path": "data/self_correction_log/corrections.jsonl"})
 
     # Test 1: Assess confidence (low confidence)
     confidence = await correction_engine.assess_confidence("Mock response", {"nlp_confidence": 0.4})
@@ -239,7 +275,7 @@ async def test_self_correction_engine():
 
     # Test 8: Get stats
     stats = correction_engine.get_correction_stats()
-    assert stats["total_correction_attempts"] >= 2, "Total correction attempts count incorrect"
+    assert stats["total_corrections"] >= 2, "Total correction attempts count incorrect"
     logger.info(f"Test 8 (Get Stats) Passed. Stats: {stats}")
 
     logger.info("--- SelfCorrectionEngine Tests Passed ---")

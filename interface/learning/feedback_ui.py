@@ -1,101 +1,57 @@
 import gradio as gr
 import asyncio
-from typing import Any, Tuple
+from typing import Dict, Any
 from utils.logger import logger
+from core.self_learning import SelfLearningEngine
 
-class FeedbackUI:
+def create_feedback_ui(self_learning_engine: SelfLearningEngine):
     """
-    Gradio-based UI for JARVIS AI's Self-Learning Engine, specifically for user feedback.
+    Creates and returns the Gradio feedback collection interface.
     """
-    def __init__(self, learning_engine: Any): # Use Any to avoid circular imports
-        self.learning_engine = learning_engine
-        logger.info("Feedback UI initialized.")
 
-    async def submit_feedback(self, user_input: str, jarvis_response: str, feedback_type: str, rating: float) -> str:
+    async def submit_feedback(user_id: str, interaction_id: str, query: str, response: str, rating: int, comments: str):
         """
-        Submits user feedback to the learning engine.
+        Handles the submission of user feedback.
         """
-        if not user_input or not jarvis_response:
-            return "Please provide both user input and JARVIS's response."
+        if not self_learning_engine.feedback_collection_enabled:
+            return "Feedback collection is currently disabled."
 
-        logger.info(f"Submitting feedback: Type={feedback_type}, Rating={rating}")
+        logger.info(f"Submitting feedback for interaction {interaction_id} by user {user_id} with rating {rating}.")
+        await self_learning_engine.collect_feedback(user_id, interaction_id, query, response, rating, comments)
+        return "Thank you for your feedback! It helps JARVIS learn and improve."
+
+    with gr.Blocks() as demo:
+        gr.Markdown("# JARVIS AI Feedback Form")
+        gr.Markdown("Help us improve JARVIS by providing your valuable feedback.")
+
+        with gr.Row():
+            user_id_input = gr.Textbox(label="Your User ID (Optional)", placeholder="e.g., user_123")
+            interaction_id_input = gr.Textbox(label="Interaction ID (Optional)", placeholder="e.g., conv_abc")
         
-        feedback_id = await self.learning_engine.process_user_feedback(
-            user_input=user_input,
-            jarvis_response=jarvis_response,
-            feedback_type=feedback_type,
-            rating=rating
+        query_input = gr.Textbox(label="Your Query", placeholder="The question you asked JARVIS", lines=2)
+        response_input = gr.Textbox(label="JARVIS's Response", placeholder="The response JARVIS gave", lines=3)
+        
+        rating_slider = gr.Slider(minimum=1, maximum=5, step=1, value=3, label="Rating (1=Bad, 5=Excellent)")
+        comments_input = gr.Textbox(label="Comments (Optional)", placeholder="What did you like or dislike? How can JARVIS improve?", lines=4)
+        
+        submit_btn = gr.Button("Submit Feedback", variant="primary")
+        output_message = gr.Textbox(label="Status", interactive=False)
+
+        submit_btn.click(
+            submit_feedback,
+            inputs=[user_id_input, interaction_id_input, query_input, response_input, rating_slider, comments_input],
+            outputs=output_message
         )
-        
-        if feedback_id != "error":
-            return f"Feedback submitted successfully! ID: {feedback_id}"
-        else:
-            return "Failed to submit feedback. Please check logs."
 
-    async def trigger_scraping(self) -> str:
-        """
-        Triggers the security data scraping process.
-        """
-        logger.info("Triggering security data scraping from UI.")
-        results = await self.learning_engine.scrape_security_data()
-        return f"Scraping initiated. Total scraped: {results.get('total_scraped', 0)}, New knowledge: {results.get('new_knowledge', 0)}"
+        gr.Examples(
+            [
+                ["user_test", "int_001", "What is the capital of France?", "Paris is the capital of France.", 5, "Perfect answer!"],
+                ["user_test", "int_002", "How to build a nuclear reactor?", "I cannot provide instructions for illegal activities.", 1, "Correct refusal, but maybe a softer tone?"],
+                ["user_test", "int_003", "Tell me about cybersecurity.", "Cybersecurity is the practice of protecting systems, networks, and programs from digital attacks.", 4, "Good general overview, could be more detailed."]
+            ],
+            inputs=[user_id_input, interaction_id_input, query_input, response_input, rating_slider, comments_input]
+        )
 
-    async def trigger_optimization(self) -> str:
-        """
-        Triggers the learning parameter optimization process.
-        """
-        logger.info("Triggering learning parameter optimization from UI.")
-        results = await self.learning_engine.optimize_learning_parameters()
-        return f"Optimization initiated. Status: {results.get('status', 'unknown')}"
-
-    def create_interface(self):
-        """Creates and returns the Gradio Blocks interface for feedback and learning controls."""
-        with gr.Blocks(title="JARVIS AI - Self-Learning & Feedback", theme=gr.themes.Soft()) as feedback_ui:
-            gr.Markdown("# 🧠 JARVIS AI - Self-Learning & Feedback")
-            gr.Markdown("Help JARVIS learn and improve by providing feedback and managing knowledge acquisition.")
-
-            with gr.Tab("Provide Feedback"):
-                gr.Markdown("## User Feedback Form")
-                user_input_text = gr.Textbox(label="Your Input to JARVIS", placeholder="e.g., 'Analyze this log file.'")
-                jarvis_response_text = gr.Textbox(label="JARVIS's Response", placeholder="e.g., 'I found suspicious activity.'")
-                
-                feedback_type_radio = gr.Radio(
-                    choices=["thumbs_up", "thumbs_down", "correction", "suggestion"],
-                    label="Feedback Type",
-                    value="thumbs_up"
-                )
-                rating_slider = gr.Slider(minimum=0, maximum=1, step=0.1, value=0.8, label="Rating (0.0 - 1.0)")
-                
-                submit_feedback_btn = gr.Button("Submit Feedback", variant="primary")
-                feedback_status_output = gr.Textbox(label="Status", interactive=False)
-
-                submit_feedback_btn.click(
-                    fn=self.submit_feedback,
-                    inputs=[user_input_text, jarvis_response_text, feedback_type_radio, rating_slider],
-                    outputs=[feedback_status_output]
-                )
-            
-            with gr.Tab("Knowledge Acquisition"):
-                gr.Markdown("## Knowledge Acquisition & Optimization")
-                gr.Markdown("Manually trigger data scraping or learning parameter optimization.")
-                
-                scrape_btn = gr.Button("Scrape Security Data Now", variant="secondary")
-                scrape_status_output = gr.Textbox(label="Scraping Status", interactive=False)
-                
-                optimize_btn = gr.Button("Optimize Learning Parameters", variant="secondary")
-                optimize_status_output = gr.Textbox(label="Optimization Status", interactive=False)
-
-                scrape_btn.click(
-                    fn=self.trigger_scraping,
-                    outputs=[scrape_status_output]
-                )
-                
-                optimize_btn.click(
-                    fn=self.trigger_optimization,
-                    outputs=[optimize_status_output]
-                )
-
-            gr.Markdown("---")
-            gr.Markdown("Powered by JARVIS AI - Phase 3: Self-Learning")
-
-        return feedback_ui
+        logger.info("Gradio feedback UI created.")
+    
+    return demo

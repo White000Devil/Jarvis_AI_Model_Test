@@ -1,18 +1,32 @@
-[
-  {
-    "id": "video_001",
-    "filename": "sample_security_footage.mp4",
-    "description": "Simulated security footage of a server room.",
-    "tags": ["security", "server room", "access control"],
-    "duration_seconds": 30,
-    "analysis_status": "pending"
-  },
-  {
-    "id": "video_002",
-    "filename": "sample_network_traffic.pcap",
-    "description": "Simulated network traffic capture for anomaly detection.",
-    "tags": ["network", "traffic", "anomaly detection"],
-    "duration_seconds": 60,
-    "analysis_status": "pending"
-  }
-]
+{
+  "dataset_name": "Sample Video Events",
+  "description": "A small dataset of simulated video events for testing JARVIS AI's vision capabilities.",
+  "version": "1.0",
+  "created_date": "2023-10-26T10:00:00Z",
+  "videos": [
+    {
+      "id": "video_001",
+      "filename": "sample_security_footage.mp4",
+      "duration_seconds": 60,
+      "events": [
+        { "timestamp_seconds": 5, "type": "person_detected", "location": "entrance" },
+        { "timestamp_seconds": 12, "type": "unusual_activity", "description": "loitering" },
+        { "timestamp_seconds": 25, "type": "object_left_behind", "object": "backpack" },
+        { "timestamp_seconds": 40, "type": "person_detected", "location": "exit" }
+      ],
+      "tags": ["security", "surveillance", "public_space"]
+    },
+    {
+      "id": "video_002",
+      "filename": "sample_traffic_cam.mp4",
+      "duration_seconds": 90,
+      "events": [
+        { "timestamp_seconds": 10, "type": "vehicle_count", "count": 5, "direction": "north" },
+        { "timestamp_seconds": 30, "type": "traffic_congestion", "severity": "medium" },
+        { "timestamp_seconds": 55, "type": "accident_detected", "severity": "minor" },
+        { "timestamp_seconds": 80, "type": "vehicle_count", "count": 8, "direction": "south" }
+      ],
+      "tags": ["traffic", "urban_monitoring"]
+    }
+  ]
+}

@@ -1,86 +1,90 @@
 import os
-import sys
-from pathlib import Path
 import yaml
 from utils.logger import setup_logging, logger
 
 def setup_directories(config: dict):
-    """Creates necessary directories based on config."""
-    data_dir = Path(config.get("DATA_DIR", "data"))
-    log_dir = Path(config.get("LOG_DIR", "logs"))
-    chroma_db_path = Path(config.get("CHROMA_DB_PATH", "data/chroma_db"))
-    feedback_log_path = Path(config.get("FEEDBACK_LOG_PATH", "data/feedback_logs/feedback.jsonl")).parent
-    scraping_log_path = Path(config.get("SCRAPING_LOG_PATH", "data/scraping_logs/scraping.jsonl")).parent
-    ethical_violation_log_path = Path(config.get("ETHICAL_VIOLATION_LOG_PATH", "data/ethical_violations/violations.jsonl")).parent
-    self_correction_log_path = Path(config.get("SELF_CORRECTION_LOG_PATH", "data/self_correction_log/corrections.jsonl")).parent
+    """Ensures all necessary data and log directories exist."""
+    app_config = config.get("app", {})
+    data_dir = app_config.get("data_dir", "data")
+    log_dir = app_config.get("log_dir", "logs")
 
-    dirs_to_create = [
-        data_dir,
-        log_dir,
-        chroma_db_path,
-        feedback_log_path,
-        scraping_log_path,
-        ethical_violation_log_path,
-        self_correction_log_path,
-        Path("data/video_datasets") # For vision engine
-    ]
+    # Create base data and log directories
+    os.makedirs(data_dir, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
+    logger.info(f"Ensured base data directory: {data_dir}")
+    logger.info(f"Ensured base log directory: {log_dir}")
 
-    for d in dirs_to_create:
-        try:
-            d.mkdir(parents=True, exist_ok=True)
-            logger.info(f"Ensured directory exists: {d}")
-        except OSError as e:
-            logger.error(f"Error creating directory {d}: {e}")
-            sys.exit(1)
+    # Create specific sub-directories based on config paths
+    memory_config = config.get("memory", {})
+    if memory_config.get("db_type") == "chromadb":
+        chroma_path = memory_config.get("chroma_path", os.path.join(data_dir, "chroma_db"))
+        os.makedirs(chroma_path, exist_ok=True)
+        logger.info(f"Ensured ChromaDB directory: {chroma_path}")
 
-def load_config(config_path: str = "config.yaml") -> dict:
-    """Loads configuration from a YAML file."""
+    vision_config = config.get("vision", {})
+    if vision_config.get("enabled"):
+        cache_dir = vision_config.get("cache_dir", os.path.join(data_dir, "vision_cache"))
+        os.makedirs(cache_dir, exist_ok=True)
+        logger.info(f"Ensured Vision cache directory: {cache_dir}")
+
+    learning_config = config.get("learning", {})
+    if learning_config.get("feedback_collection"):
+        feedback_log_path = learning_config.get("feedback_log_path", os.path.join(data_dir, "feedback_logs", "feedback.jsonl"))
+        os.makedirs(os.path.dirname(feedback_log_path), exist_ok=True)
+        logger.info(f"Ensured Feedback logs directory: {os.path.dirname(feedback_log_path)}")
+    if learning_config.get("scraping_enabled"):
+        scraping_log_path = learning_config.get("scraping_log_path", os.path.join(data_dir, "scraping_logs", "scraping.jsonl"))
+        os.makedirs(os.path.dirname(scraping_log_path), exist_ok=True)
+        logger.info(f"Ensured Scraping logs directory: {os.path.dirname(scraping_log_path)}")
+
+    ethical_ai_config = config.get("ethical_ai", {})
+    if ethical_ai_config.get("enabled") and ethical_ai_config.get("log_violations"):
+        ethical_violation_log_path = ethical_ai_config.get("ethical_violation_log_path", os.path.join(data_dir, "ethical_violations", "violations.jsonl"))
+        os.makedirs(os.path.dirname(ethical_violation_log_path), exist_ok=True)
+        logger.info(f"Ensured Ethical violations logs directory: {os.path.dirname(ethical_violation_log_path)}")
+
+    self_correction_config = config.get("self_correction", {})
+    if self_correction_config.get("enabled") and self_correction_config.get("log_corrections"):
+        self_correction_log_path = self_correction_config.get("self_correction_log_path", os.path.join(data_dir, "self_correction_log", "corrections.jsonl"))
+        os.makedirs(os.path.dirname(self_correction_log_path), exist_ok=True)
+        logger.info(f"Ensured Self-correction logs directory: {os.path.dirname(self_correction_log_path)}")
+
+    # Ensure video_datasets directory exists and contains metadata.json (if applicable)
+    video_datasets_dir = os.path.join(data_dir, "video_datasets")
+    os.makedirs(video_datasets_dir, exist_ok=True)
+    metadata_file = os.path.join(video_datasets_dir, "metadata.json")
+    if not os.path.exists(metadata_file):
+        logger.warning(f"metadata.json not found in {video_datasets_dir}. Creating a placeholder.")
+        # Create a minimal placeholder metadata.json
+        placeholder_metadata = {
+            "dataset_name": "Placeholder Video Dataset",
+            "description": "This is a placeholder metadata file. Add your video details here.",
+            "videos": []
+        }
+        with open(metadata_file, 'w') as f:
+            yaml.safe_dump(placeholder_metadata, f, indent=2)
+    logger.info(f"Ensured Video datasets directory: {video_datasets_dir}")
+
+
+def main():
+    """Main function to load config and set up environment."""
+    config_path = "config.yaml"
+    
+    # Load config to get log level and debug status for initial logging setup
     try:
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f)
-        logger.info(f"Configuration loaded from {config_path}")
-        return config
     except FileNotFoundError:
-        logger.error(f"Config file not found at {config_path}. Please ensure it exists.")
-        sys.exit(1)
+        print(f"Error: config.yaml not found at {config_path}. Please ensure it exists.")
+        exit(1)
     except yaml.YAMLError as e:
-        logger.error(f"Error parsing config file {config_path}: {e}")
-        sys.exit(1)
+        print(f"Error parsing config.yaml: {e}")
+        exit(1)
 
-def setup_environment():
-    """
-    Sets up the necessary environment variables and directories for JARVIS AI.
-    """
-    logger.info("Setting up JARVIS AI environment...")
-
-    # Load configuration
-    config = load_config()
-
-    # Create data directories if they don't exist
+    setup_logging(debug=config["app"]["debug"], log_level=config["app"]["log_level"])
+    logger.info("Starting environment setup...")
     setup_directories(config)
-
-    # Set up dummy environment variables if not already set (for local testing)
-    # In a real deployment, these would be managed by the environment.
-    os.environ.setdefault("OPENAI_API_KEY", "sk-YOUR_OPENAI_API_KEY")
-    os.environ.setdefault("GITHUB_TOKEN", "ghp_YOUR_GITHUB_TOKEN")
-    os.environ.setdefault("VIRUSTOTAL_API_KEY", "YOUR_VIRUSTOTAL_API_KEY")
-    os.environ.setdefault("SHODAN_API_KEY", "YOUR_SHODAN_API_KEY")
-    os.environ.setdefault("SLACK_TOKEN", "xoxb-YOUR_SLACK_TOKEN")
-    os.environ.setdefault("DISCORD_TOKEN", "YOUR_DISCORD_TOKEN")
-    os.environ.setdefault("DISCORD_SECURITY_CHANNEL", "YOUR_DISCORD_CHANNEL_ID")
-    os.environ.setdefault("AWS_ACCESS_KEY_ID", "YOUR_AWS_ACCESS_KEY_ID")
-    os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "YOUR_AWS_SECRET_ACCESS_KEY")
-    os.environ.setdefault("AWS_REGION", "us-east-1")
-
     logger.info("Environment setup complete.")
 
 if __name__ == "__main__":
-    # Add project root to path
-    sys.path.append(str(Path(__file__).parent.parent))
-
-    # This block is for standalone execution of setup_environment.py
-    # When run via main.py, setup_logging is handled by main.py
-    setup_logging(debug=True)
-    logger.info("Starting environment setup...")
-    setup_environment()
-    logger.info("Environment setup complete.")
+    main()

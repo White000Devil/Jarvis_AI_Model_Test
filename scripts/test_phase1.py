@@ -5,128 +5,131 @@ Tests the functionality of the NLP Engine, Memory Manager, and Chat Interface.
 
 import asyncio
 import sys
+import os
 from pathlib import Path
 
 # Add project root to Python path
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.append(str(PROJECT_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from utils.logger import setup_logging, logger
 from core.nlp_engine import NLPEngine
 from core.memory_manager import MemoryManager
-from scripts.setup_environment import load_config
-from utils.logger import setup_logging, logger
 
-async def test_phase1():
-    """Tests NLP Engine and Memory Manager functionalities."""
-    logger.info("--- Starting Phase 1 Tests (NLP & Memory) ---")
-    
-    config = load_config()
-    
-    # Initialize components
-    nlp_engine = NLPEngine(config)
-    memory_manager = MemoryManager(config)
+# Mock configuration for testing
+TEST_CONFIG = {
+    "app": {"debug": True, "log_level": "DEBUG"},
+    "nlp": {"model_name": "distilbert-base-uncased", "max_seq_length": 128},
+    "memory": {"db_type": "chromadb", "chroma_path": "data/test_chroma_db", "embedding_model": "all-MiniLM-L6-v2"}
+}
 
-    # Test 1: NLP Engine - Basic Query Processing
-    logger.info("\n--- Test 1: NLP Engine - Basic Query Processing ---")
-    query1 = "Hello JARVIS, how are you today?"
-    response1 = await nlp_engine.process_query(query1)
-    logger.info(f"Query: '{query1}'")
-    logger.info(f"NLP Response: {response1['content']}")
-    logger.info(f"Intent: {response1['metadata']['intent']}, Confidence: {response1['metadata']['confidence']:.2f}")
-    assert response1['metadata']['intent'] == "greeting", "Test 1 Failed: Incorrect intent for greeting."
-    assert response1['metadata']['confidence'] > 0.7, "Test 1 Failed: Low confidence for greeting."
-    logger.info("Test 1 Passed: NLP Engine processed greeting correctly.")
+async def test_nlp_engine():
+    logger.info("--- Testing NLP Engine ---")
+    nlp_engine = NLPEngine(TEST_CONFIG["nlp"])
 
-    # Test 2: NLP Engine - Security Query
-    logger.info("\n--- Test 2: NLP Engine - Security Query ---")
-    query2 = "What is a SQL injection vulnerability?"
-    response2 = await nlp_engine.process_query(query2)
-    logger.info(f"Query: '{query2}'")
-    logger.info(f"NLP Response: {response2['content']}")
-    logger.info(f"Intent: {response2['metadata']['intent']}, Confidence: {response2['metadata']['confidence']:.2f}")
-    assert response2['metadata']['intent'] == "security_query", "Test 2 Failed: Incorrect intent for security query."
-    assert response2['metadata']['confidence'] > 0.7, "Test 2 Failed: Low confidence for security query."
-    logger.info("Test 2 Passed: NLP Engine processed security query correctly.")
+    # Test 1: Basic query processing
+    query1 = "What is the capital of France?"
+    result1 = await nlp_engine.process_query(query1)
+    assert result1["metadata"]["intent"] == "general_query", f"Test 1 Failed: Expected 'general_query', got {result1['metadata']['intent']}"
+    assert "france" in result1["metadata"]["entities"][0]["entity"].lower(), "Test 1 Failed: Expected 'France' entity"
+    logger.info("Test 1 (Basic Query) Passed.")
 
-    # Test 3: Memory Manager - Add Conversation
-    logger.info("\n--- Test 3: Memory Manager - Add Conversation ---")
-    user_msg = "Can you remind me about the last security update?"
-    jarvis_resp = "The last security update was on October 26, 2023, addressing CVE-2023-44487."
-    conv_metadata = {"intent": "security_query", "topic": "security_update"}
-    await memory_manager.add_conversation(user_msg, jarvis_resp, conv_metadata)
-    logger.info("Test 3 Passed: Conversation added to memory.")
+    # Test 2: Sentiment analysis
+    query2 = "I am very happy with your service!"
+    result2 = await nlp_engine.process_query(query2)
+    assert result2["metadata"]["sentiment_label"] == "POSITIVE", f"Test 2 Failed: Expected 'POSITIVE', got {result2['metadata']['sentiment_label']}"
+    logger.info("Test 2 (Sentiment Analysis) Passed.")
 
-    # Test 4: Memory Manager - Search Conversations
-    logger.info("\n--- Test 4: Memory Manager - Search Conversations ---")
-    search_query = "last security update"
-    search_results = await memory_manager.search_conversations(search_query, limit=1)
-    logger.info(f"Searching for: '{search_query}'")
-    logger.info(f"Search Results: {search_results}")
-    assert len(search_results) > 0, "Test 4 Failed: No relevant conversations found."
-    assert "security update" in search_results[0]['document'].lower(), "Test 4 Failed: Irrelevant conversation found."
-    logger.info("Test 4 Passed: Relevant conversation found in memory.")
+    # Test 3: Security intent
+    query3 = "How can I protect my network from cyber attacks?"
+    result3 = await nlp_engine.process_query(query3)
+    assert result3["metadata"]["intent"] == "security_query", f"Test 3 Failed: Expected 'security_query', got {result3['metadata']['intent']}"
+    logger.info("Test 3 (Security Intent) Passed.")
 
-    # Test 5: Memory Manager - Add and Search Knowledge Article
-    logger.info("\n--- Test 5: Memory Manager - Add and Search Knowledge Article ---")
-    kb_title = "Introduction to Zero Trust Architecture"
-    kb_content = "Zero Trust is a security framework requiring all users, whether inside or outside the organization’s network, to be authenticated, authorized, and continuously validated before being granted or retaining access to applications and data."
-    kb_source = "NIST SP 800-207"
-    await memory_manager.add_knowledge_article(kb_title, kb_content, kb_source, tags=["zero trust", "security framework"])
-    logger.info("Knowledge article added.")
+    logger.info("--- NLP Engine Tests Passed ---")
+    return True
 
-    search_kb_query = "what is zero trust"
-    kb_search_results = await memory_manager.search_knowledge(search_kb_query, limit=1)
-    logger.info(f"Searching knowledge for: '{search_kb_query}'")
-    logger.info(f"Knowledge Search Results: {kb_search_results}")
-    assert len(kb_search_results) > 0, "Test 5 Failed: No relevant knowledge found."
-    assert "zero trust" in kb_search_results[0]['document'].lower(), "Test 5 Failed: Irrelevant knowledge found."
-    logger.info("Test 5 Passed: Relevant knowledge article found.")
+async def test_memory_manager():
+    logger.info("--- Testing Memory Manager ---")
+    # Ensure a clean test DB
+    if os.path.exists(TEST_CONFIG["memory"]["chroma_path"]):
+        import shutil
+        shutil.rmtree(TEST_CONFIG["memory"]["chroma_path"])
+        logger.info(f"Cleaned up old test ChromaDB at {TEST_CONFIG['memory']['chroma_path']}")
 
-    # Test 6: Memory Manager - Get Memory Stats
-    logger.info("\n--- Test 6: Memory Manager - Get Memory Stats ---")
-    memory_stats = memory_manager.get_memory_stats()
-    logger.info(f"Memory Stats: {memory_stats}")
-    assert memory_stats["total_items"] > 0, "Test 6 Failed: Total items should be greater than 0."
-    assert memory_stats["conversations"]["count"] >= 1, "Test 6 Failed: Conversation count incorrect."
-    assert memory_stats["general_knowledge"]["count"] >= 1, "Test 6 Failed: Knowledge count incorrect."
-    logger.info("Test 6 Passed: Memory stats retrieved successfully.")
+    memory_manager = MemoryManager(TEST_CONFIG["memory"])
 
-    logger.info("\n--- All Phase 1 Tests Completed Successfully! ---")
+    # Test 1: Add conversation
+    user_input1 = "Hello JARVIS, how are you?"
+    jarvis_response1 = "I am functioning optimally. How can I assist you?"
+    await memory_manager.add_conversation(user_input1, jarvis_response1, {"session_id": "test_session_1"})
+    logger.info("Test 1 (Add Conversation) Passed.")
+
+    # Test 2: Search conversations
+    search_query1 = "how are you"
+    results1 = await memory_manager.search_conversations(search_query1, limit=1)
+    assert len(results1) > 0, "Test 2 Failed: Expected conversation results"
+    assert "functioning optimally" in results1[0]["content"], "Test 2 Failed: Expected relevant conversation content"
+    logger.info("Test 2 (Search Conversations) Passed.")
+
+    # Test 3: Add knowledge article
+    title1 = "Quantum Computing Basics"
+    content1 = "Quantum computing is a new type of computing that harnesses the phenomena of quantum mechanics."
+    source1 = "Wikipedia"
+    tags1 = ["science", "technology"]
+    await memory_manager.add_knowledge_article(title1, content1, source1, tags1)
+    logger.info("Test 3 (Add Knowledge Article) Passed.")
+
+    # Test 4: Search knowledge
+    search_query2 = "what is quantum computing"
+    results2 = await memory_manager.search_knowledge(search_query2, limit=1)
+    assert len(results2) > 0, "Test 4 Failed: Expected knowledge results"
+    assert "quantum mechanics" in results2[0]["content"], "Test 4 Failed: Expected relevant knowledge content"
+    logger.info("Test 4 (Search Knowledge) Passed.")
+
+    # Test 5: Add security knowledge
+    sec_title1 = "CVE-2023-12345"
+    sec_content1 = "A critical buffer overflow vulnerability in XYZ software."
+    sec_source1 = "NVD"
+    sec_type1 = "buffer_overflow"
+    await memory_manager.add_security_knowledge(sec_title1, sec_content1, sec_source1, sec_type1)
+    logger.info("Test 5 (Add Security Knowledge) Passed.")
+
+    # Test 6: Search security knowledge
+    search_query3 = "vulnerability in XYZ software"
+    results3 = await memory_manager.search_security_knowledge(search_query3, limit=1)
+    assert len(results3) > 0, "Test 6 Failed: Expected security knowledge results"
+    assert "buffer overflow" in results3[0]["content"], "Test 6 Failed: Expected relevant security knowledge content"
+    logger.info("Test 6 (Search Security Knowledge) Passed.")
+
+    # Test 7: Persist and reload (basic check)
+    memory_manager.persist_memory()
+    del memory_manager # Remove instance to force reload
+    reloaded_memory_manager = MemoryManager(TEST_CONFIG["memory"])
+    reloaded_results = await reloaded_memory_manager.search_conversations(search_query1, limit=1)
+    assert len(reloaded_results) > 0, "Test 7 Failed: Expected persisted data to be reloaded"
+    logger.info("Test 7 (Persist and Reload) Passed.")
+
+    # Clean up test DB
+    reloaded_memory_manager.clear_memory()
+    if os.path.exists(TEST_CONFIG["memory"]["chroma_path"]):
+        import shutil
+        shutil.rmtree(TEST_CONFIG["memory"]["chroma_path"])
+        logger.info(f"Cleaned up test ChromaDB at {TEST_CONFIG['memory']['chroma_path']}")
+
+    logger.info("--- Memory Manager Tests Passed ---")
+    return True
 
 async def main():
-    """Run all Phase 1 tests"""
-    setup_logging(debug=True) # Ensure logging is set up for tests
-    print("🧪 Running JARVIS AI Phase 1 Tests...")
+    setup_logging(debug=True, log_level="DEBUG")
+    logger.info("--- Running Phase 1 Tests ---")
     
-    results = {
-        "nlp_engine": False,
-        "memory_manager": False,
-        "chat_interface": False
-    }
-    
-    print("\n--- Testing NLP Engine ---")
-    results["nlp_engine"] = await test_phase1()
-    
-    print("\n--- Testing Memory Manager ---")
-    results["memory_manager"] = await test_phase1()
-    
-    print("\n--- Testing Chat Interface (Requires Manual Interaction) ---")
-    print("Please follow the prompts in the chat window that appears.")
-    results["chat_interface"] = await test_phase1() # This will block until manual exit
-    
-    print("\n--- Phase 1 Test Summary ---")
-    for test_name, passed in results.items():
-        status = "✅ PASSED" if passed else "❌ FAILED"
-        print(f"{test_name.replace('_', ' ').title()}: {status}")
-    
-    all_passed = all(results.values())
-    final_status = "🎉 All Phase 1 tests passed!" if all_passed else "⚠️ Some Phase 1 tests failed."
-    print(f"\n{final_status}")
-    
-    return all_passed
+    nlp_passed = await test_nlp_engine()
+    memory_passed = await test_memory_manager()
+
+    if nlp_passed and memory_passed:
+        logger.info("--- All Phase 1 Tests Passed Successfully! ---")
+    else:
+        logger.error("--- Some Phase 1 Tests Failed. Review logs for details. ---")
 
 if __name__ == "__main__":
-    # Ensure logging is set up for tests
-    config = load_config()
-    setup_logging(debug=(config.get("LOG_LEVEL", "INFO").upper() == "DEBUG"))
     asyncio.run(main())

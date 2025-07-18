@@ -30,6 +30,10 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+# Start JARVIS AI in admin mode for API/Vision interactions
+echo "Starting JARVIS AI in admin mode..."
+python3 main.py --mode admin
+
 echo "--- JARVIS AI (Phase 2) Stopped ---"
 
 echo ""

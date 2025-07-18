@@ -1,145 +1,126 @@
-import asyncio
 import json
-from datetime import datetime
 from typing import Dict, Any, List
+from datetime import datetime
 from utils.logger import logger
 from core.memory_manager import MemoryManager
-from core.knowledge_integrator import KnowledgeIntegrator # For scraping
+from core.knowledge_integrator import KnowledgeIntegrator # Import KnowledgeIntegrator
 
 class SelfLearningEngine:
     """
-    Enables JARVIS AI to learn from interactions, feedback, and new data sources.
+    Enables JARVIS AI to learn from new data, user feedback, and interactions.
+    Manages feedback collection, knowledge updates, and model fine-tuning (simulated).
     """
-    def __init__(self, memory_manager: MemoryManager, config: Dict[str, Any]):
-        self.config = config
+    def __init__(self, memory_manager: MemoryManager, knowledge_integrator: KnowledgeIntegrator, config: Dict[str, Any]):
         self.memory_manager = memory_manager
-        self.knowledge_integrator = KnowledgeIntegrator(config, memory_manager) # Use existing KnowledgeIntegrator
-        self.feedback_log_path = Path(config.get("FEEDBACK_LOG_PATH", "data/feedback_logs/feedback.jsonl"))
-        self.scraping_log_path = Path(config.get("SCRAPING_LOG_PATH", "data/scraping_logs/scraping.jsonl"))
+        self.knowledge_integrator = knowledge_integrator # Store KnowledgeIntegrator instance
+        self.config = config
+        self.feedback_collection_enabled = config.get("feedback_collection", True)
+        self.scraping_enabled = config.get("scraping_enabled", False)
+        self.feedback_log_path = config.get("feedback_log_path", "data/feedback_logs/feedback.jsonl")
+        self.scraping_log_path = config.get("scraping_log_path", "data/scraping_logs/scraping.jsonl")
         logger.info("Self-Learning Engine initialized.")
 
-    async def process_user_feedback(self, user_input: str, jarvis_response: str,
-                                    feedback_type: str, rating: float,
-                                    intent_recognized: str = "unknown") -> str:
+    async def collect_feedback(self, user_id: str, interaction_id: str, query: str, response: str, rating: int, comments: str = None):
         """
-        Processes user feedback to improve JARVIS's performance.
-        Feedback is logged and can be used for model fine-tuning or rule adjustments.
+        Collects user feedback on JARVIS's responses.
+        Rating: 1 (bad) to 5 (excellent).
         """
-        feedback_id = f"feedback_{datetime.now().timestamp()}"
+        if not self.feedback_collection_enabled:
+            logger.info("Feedback collection is disabled.")
+            return
+
         feedback_data = {
-            "id": feedback_id,
             "timestamp": datetime.now().isoformat(),
-            "user_input": user_input,
-            "jarvis_response": jarvis_response,
-            "feedback_type": feedback_type, # e.g., "thumbs_up", "thumbs_down", "correction"
-            "rating": rating, # e.g., 0.0 to 1.0
-            "intent_recognized": intent_recognized
+            "user_id": user_id,
+            "interaction_id": interaction_id,
+            "query": query,
+            "response": response,
+            "rating": rating,
+            "comments": comments
         }
         
         try:
-            # Log feedback to a file for later analysis/training
-            logger.info(json.dumps(feedback_data), extra={"log_type": "feedback"})
-            logger.info(f"Processed user feedback (ID: {feedback_id}, Type: {feedback_type}, Rating: {rating:.1f})")
-
-            # Depending on feedback, trigger specific learning actions
-            if feedback_type == "correction" and rating < 0.5:
-                logger.warning(f"Negative feedback received. Consider triggering self-correction or human review for: {user_input}")
-                # This could trigger a self-correction process or flag for human review
-            elif feedback_type == "thumbs_up" and rating > 0.8:
-                logger.info("Positive feedback received. Reinforcing successful interaction.")
-                # This could be used to reinforce positive patterns in a reinforcement learning setup
-
-            return feedback_id
+            with open(self.feedback_log_path, "a") as f:
+                f.write(json.dumps(feedback_data) + "\n")
+            logger.info(f"Feedback collected for interaction {interaction_id} (Rating: {rating}).")
+            # Optionally, trigger immediate learning based on critical feedback
+            if rating <= 2:
+                await self.process_negative_feedback(feedback_data)
         except Exception as e:
-            logger.error(f"Error processing user feedback: {e}")
-            return "error"
+            logger.error(f"Failed to log feedback: {e}")
 
-    async def scrape_security_data(self, max_items: int = None) -> Dict[str, Any]:
+    async def process_negative_feedback(self, feedback_data: Dict[str, Any]):
         """
-        Triggers the knowledge integrator to scrape and add new security data.
+        Processes negative feedback to identify areas for improvement and trigger learning.
         """
-        logger.info("Initiating security data scraping via Knowledge Integrator...")
-        results = await self.knowledge_integrator.scrape_and_integrate_security_data(max_items)
-        logger.info(f"Security data scraping completed. New items: {results.get('new_knowledge', 0)}")
-        return results
-
-    async def optimize_learning_parameters(self):
-        """
-        Simulates the optimization of internal learning parameters based on performance.
-        In a real system, this would involve analyzing logs, retraining models, etc.
-        """
-        logger.info("Optimizing learning parameters based on historical data (simulated)...")
-        # Placeholder for actual optimization logic
-        await asyncio.sleep(1) # Simulate work
-        logger.info("Learning parameters optimization complete.")
-        return {"status": "optimized", "timestamp": datetime.now().isoformat()}
-
-    def get_learning_stats(self) -> Dict[str, Any]:
-        """
-        Returns statistics about the self-learning engine's activities.
-        Reads from log files to provide real-time stats.
-        """
-        feedback_stats = {"total_feedback": 0, "positive_feedback": 0, "negative_feedback": 0, "average_rating": 0.0, "recent_average": 0.0}
-        scraping_stats = {"total_scraped": 0, "new_knowledge": 0, "processed_items": 0, "processing_rate": 0.0}
+        logger.warning(f"Processing negative feedback for query: '{feedback_data['query']}'")
+        # Example: If response was incorrect, add it to a queue for human review
+        # Or, if it's a factual error, try to find correct information and update memory
         
-        # Read feedback logs
-        if self.feedback_log_path.exists():
-            ratings_sum = 0
-            ratings_count = 0
-            with open(self.feedback_log_path, 'r') as f:
-                for line in f:
-                    try:
-                        data = json.loads(line)
-                        feedback_stats["total_feedback"] += 1
-                        if data.get("rating", 0) >= 0.7:
-                            feedback_stats["positive_feedback"] += 1
-                        else:
-                            feedback_stats["negative_feedback"] += 1
-                        ratings_sum += data.get("rating", 0)
-                        ratings_count += 1
-                    except json.JSONDecodeError:
-                        logger.warning(f"Skipping malformed feedback log line: {line.strip()}")
-            if ratings_count > 0:
-                feedback_stats["average_rating"] = ratings_sum / ratings_count
-            
-            # Simple recent average (e.g., last 10 feedbacks)
-            recent_ratings_sum = 0
-            recent_ratings_count = 0
-            if self.feedback_log_path.exists():
-                with open(self.feedback_log_path, 'r') as f:
-                    lines = f.readlines()
-                    for line in lines[-10:]: # Look at last 10 lines
-                        try:
-                            data = json.loads(line)
-                            recent_ratings_sum += data.get("rating", 0)
-                            recent_ratings_count += 1
-                        except json.JSONDecodeError:
-                            pass
-            if recent_ratings_count > 0:
-                feedback_stats["recent_average"] = recent_ratings_sum / recent_ratings_count
+        # Simulate updating knowledge based on feedback
+        corrected_content = f"Correction for: {feedback_data['query']}. Original response was: '{feedback_data['response']}'. User indicated issues: '{feedback_data['comments'] or 'No specific comments'}'. JARVIS needs to learn the correct information."
+        await self.memory_manager.add_knowledge_article(
+            title=f"Feedback Correction for {feedback_data['interaction_id']}",
+            content=corrected_content,
+            source="user_feedback",
+            tags=["correction", "feedback"]
+        )
+        logger.info("Negative feedback processed and correction knowledge added to memory.")
 
-        # Read scraping logs
-        if self.scraping_log_path.exists():
-            with open(self.scraping_log_path, 'r') as f:
-                for line in f:
-                    try:
-                        data = json.loads(line)
-                        scraping_stats["total_scraped"] += data.get("total_scraped", 0)
-                        scraping_stats["new_knowledge"] += data.get("new_knowledge", 0)
-                        scraping_stats["processed_items"] += data.get("total_scraped", 0) # Assuming processed = scraped
-                    except json.JSONDecodeError:
-                        logger.warning(f"Skipping malformed scraping log line: {line.strip()}")
-            if scraping_stats["processed_items"] > 0:
-                # This rate would be more meaningful if we tracked time
-                scraping_stats["processing_rate"] = scraping_stats["new_knowledge"] / scraping_stats["processed_items"]
+    async def update_knowledge_base(self, new_data: List[Dict[str, Any]], source: str, data_type: str = "general"):
+        """
+        Integrates new data into the knowledge base.
+        This could be from manual updates, scraped data, or real-time feeds.
+        """
+        logger.info(f"Updating knowledge base with {len(new_data)} items from {source} (type: {data_type}).")
+        await self.knowledge_integrator.integrate_structured_data(new_data, source, data_type)
+        logger.info("Knowledge base update complete.")
 
-        return {
-            "feedback_stats": feedback_stats,
-            "scraping_stats": scraping_stats,
-            "learning_metrics": {
-                "learning_rate": 0.01, # Placeholder
-                "exploration_rate": 0.1, # Placeholder
-                "improvement_rate": 0.05 # Placeholder
-            },
-            "last_update": datetime.now().isoformat()
-        }
+    async def trigger_web_scraping(self, max_items: int = None):
+        """
+        Triggers the web scraping process via KnowledgeIntegrator.
+        """
+        if not self.scraping_enabled:
+            logger.info("Web scraping is disabled in configuration.")
+            return {"status": "disabled"}
+        
+        logger.info("Triggering web scraping for security data...")
+        summary = await self.knowledge_integrator.scrape_and_integrate_security_data(max_items)
+        logger.info(f"Web scraping finished. Summary: {summary}")
+        return summary
+
+    async def fine_tune_model(self, data_for_tuning: List[Dict[str, Any]]):
+        """
+        Simulates fine-tuning an NLP model with new data.
+        In a real scenario, this would involve actual model training.
+        """
+        logger.info(f"Simulating fine-tuning of NLP model with {len(data_for_tuning)} data points.")
+        # This is a placeholder for actual model fine-tuning logic.
+        # It would involve preparing data, calling a training script/API, etc.
+        await asyncio.sleep(5) # Simulate training time
+        logger.info("Model fine-tuning simulation complete. Model performance is expected to improve.")
+
+    async def review_logs_for_learning_opportunities(self):
+        """
+        Analyzes logs (e.g., conversation, error, ethical violation logs)
+        to identify patterns and opportunities for self-improvement.
+        """
+        logger.info("Reviewing logs for learning opportunities (simulated).")
+        # In a real system, this would parse log files, identify common failures,
+        # unhandled queries, or areas where JARVIS's confidence was low.
+        
+        # Example: Read a few lines from feedback log
+        try:
+            with open(self.feedback_log_path, "r") as f:
+                feedback_lines = f.readlines()
+                if feedback_lines:
+                    logger.info(f"Found {len(feedback_lines)} feedback entries. Analyzing...")
+                    # Simple analysis: count negative feedback
+                    negative_count = sum(1 for line in feedback_lines if json.loads(line).get("rating", 5) <= 2)
+                    logger.info(f"Identified {negative_count} negative feedback entries. Consider reviewing these for model improvement.")
+        except FileNotFoundError:
+            logger.warning(f"Feedback log file not found at {self.feedback_log_path}.")
+        except Exception as e:
+            logger.error(f"Error reading feedback log: {e}")
+
+        logger.info("Log review for learning opportunities complete.")

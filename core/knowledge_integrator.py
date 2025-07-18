@@ -1,18 +1,22 @@
-from typing import Dict, Any, List
+import json
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 from utils.logger import logger
 from core.memory_manager import MemoryManager # Assuming MemoryManager handles storage
+from core.api_integrations import APIIntegrations # Import APIIntegrations
 
 class KnowledgeIntegrator:
     """
     Integrates various sources of knowledge into JARVIS AI's memory.
     This includes structured data, unstructured text, and real-time feeds.
     """
-    def __init__(self, config: Dict[str, Any], memory_manager: MemoryManager):
+    def __init__(self, config: Dict[str, Any], memory_manager: MemoryManager, api_integrations: APIIntegrations):
         self.config = config
         self.memory_manager = memory_manager
-        self.security_data_sources = config.get("SECURITY_DATA_SOURCES", [])
-        self.max_scraped_items_per_run = config.get("MAX_SCRAPED_ITEMS_PER_RUN", 50)
+        self.api_integrations = api_integrations # Store APIIntegrations instance
+        self.security_data_sources = config.get("scraping_sources", []) # Renamed from SECURITY_DATA_SOURCES
+        self.realtime_feed_configs = config.get("realtime_feeds", {}).get("sources", []) # New: for real-time feeds
+        self.max_scraped_items_per_run = config.get("max_scraped_items_per_run", 50)
         logger.info("Knowledge Integrator initialized.")
 
     async def integrate_structured_data(self, data: List[Dict[str, Any]], source: str, data_type: str = "general"):
@@ -39,20 +43,58 @@ class KnowledgeIntegrator:
         await self.memory_manager.add_knowledge_article(title, text, source, tags)
         logger.info(f"Finished integrating unstructured text '{title}'.")
 
-    async def update_from_realtime_feed(self, feed_data: Dict[str, Any], feed_name: str):
+    async def update_from_realtime_feed(self, feed_type: str, query: str = None):
         """
-        Processes and integrates data from real-time feeds.
-        This is a placeholder for actual real-time data processing.
+        Processes and integrates data from real-time feeds using APIIntegrations.
         """
-        logger.info(f"Processing real-time feed '{feed_name}'...")
-        # Example: If feed_data contains security alerts
-        if feed_name == "security_alerts" and feed_data.get("alert_type"):
-            title = f"Security Alert: {feed_data['alert_type']}"
-            content = json.dumps(feed_data)
-            await self.memory_manager.add_security_knowledge(title, content, feed_name, feed_data.get("alert_type"))
-            logger.info(f"Integrated security alert from {feed_name}.")
+        logger.info(f"Processing real-time feed of type '{feed_type}' with query '{query}'...")
+        
+        if feed_type == "security_news":
+            news_data = await self.api_integrations.fetch_realtime_news(query or "cybersecurity")
+            if news_data and news_data.get("articles"):
+                for article in news_data["articles"]:
+                    title = article.get("title", "No Title")
+                    content = article.get("description", "") + " " + article.get("content", "")
+                    source = article.get("source", feed_type)
+                    tags = ["realtime", "news", "security"]
+                    await self.memory_manager.add_knowledge_article(title, content, source, tags)
+                    logger.debug(f"Integrated real-time news article: {title}")
+            else:
+                logger.warning(f"No articles found for real-time feed '{feed_type}' or API call failed.")
+        elif feed_type == "threat_intelligence":
+            threat_data = await self.api_integrations.fetch_threat_intelligence(query or "latest threats")
+            if threat_data and threat_data.get("threats"):
+                for threat in threat_data["threats"]:
+                    title = threat.get("title", "Unknown Threat")
+                    content = threat.get("description", "")
+                    source = threat.get("source", feed_type)
+                    vulnerability_type = threat.get("type", "general")
+                    await self.memory_manager.add_security_knowledge(title, content, source, vulnerability_type)
+                    logger.debug(f"Integrated real-time threat: {title}")
+            else:
+                logger.warning(f"No threats found for real-time feed '{feed_type}' or API call failed.")
         else:
-            logger.info(f"Real-time feed '{feed_name}' processed (no specific integration logic).")
+            logger.info(f"Real-time feed type '{feed_type}' processed (no specific integration logic for this type).")
+
+    async def monitor_realtime_feeds(self):
+        """
+        Monitors all configured real-time feeds and integrates new data.
+        """
+        if not self.realtime_feed_configs:
+            logger.info("No real-time feeds configured for monitoring.")
+            return
+
+        logger.info("Starting real-time feed monitoring cycle...")
+        for feed_config in self.realtime_feed_configs:
+            feed_name = feed_config.get("name")
+            feed_type = feed_config.get("type")
+            feed_query = feed_config.get("query")
+            if feed_name and feed_type:
+                logger.info(f"Monitoring feed: {feed_name} (Type: {feed_type})")
+                await self.update_from_realtime_feed(feed_type, feed_query)
+            else:
+                logger.warning(f"Malformed real-time feed configuration: {feed_config}")
+        logger.info("Finished real-time feed monitoring cycle.")
 
     async def scrape_and_integrate_security_data(self, max_items: int = None):
         """
@@ -116,5 +158,6 @@ class KnowledgeIntegrator:
                 sources_summary[source_url] = {"error": str(e)}
 
         logger.info(f"Finished security data scraping. Total scraped: {scraped_count}, New knowledge added: {new_knowledge_count}.")
+        # Log scraping summary to a file
         logger.info(json.dumps({"log_type": "scraping", "timestamp": datetime.now().isoformat(), "total_scraped": scraped_count, "new_knowledge": new_knowledge_count, "sources": sources_summary}), extra={"log_type": "scraping"})
         return {"total_scraped": scraped_count, "new_knowledge": new_knowledge_count, "sources": sources_summary}

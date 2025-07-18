@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "--- Starting JARVIS AI (Phase 3: Self-Learning) ---"
+echo "--- Starting JARVIS AI - Phase 3 (Ethical AI & Reasoning) ---"
 
 # Activate the virtual environment
 echo "Activating virtual environment..."

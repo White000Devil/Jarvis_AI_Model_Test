@@ -7,16 +7,24 @@ sentence-transformers>=2.2.2 # For ChromaDB embeddings
 aiohttp==3.9.5
 beautifulsoup4==4.12.3
 requests==2.32.3 # For general HTTP requests
-gradio>=4.0.0
+gradio>=4.0 # For UI interfaces
 httpx>=0.25.0
 opencv-python>=4.8.1.78 # For Vision Engine
 numpy # For image/video data manipulation
+scipy # For scientific computing
+python-dotenv # If using .env files (not directly used by v0, but common)
 
 # Optional dependencies for full functionality:
 # For Voice Interface:
 SpeechRecognition>=3.10.0
-pyttsx3>=2.90
-PyAudio>=0.2.11 # Often requires system-level installation (e.g., portaudio-dev on Linux)
+gTTS
+# For playing audio (choose one based on OS, or install all for cross-platform)
+# pip install pydub # For cross-platform audio manipulation
+# pip install simpleaudio # For playing audio on some systems
+# For Linux: sudo apt-get install mpg123
+# For macOS: afplay is built-in
+# For Windows: start is built-in
+# PyAudio>=0.2.11 # Often requires system-level installation (e.g., portaudio-dev on Linux)
 # For Vision Engine (advanced models, screen recording):
 # mss==9.0.1
 # Pillow==10.3.0
@@ -35,3 +43,20 @@ pandas>=2.1.4
 tiktoken>=0.5.1
 pytest>=7.0.0
 pytest-asyncio>=0.21.0
+
+# Vision dependencies (mocked, but real would need these)
+# ultralytics # For YOLO models
+
+# Voice dependencies (mocked, but real would need these)
+# pydub
+# soundfile
+# transformers[torch] # For Whisper STT
+# accelerate # For Whisper STT
+# espnet # For more advanced TTS/STT
+
+# API Integration dependencies (mocked, but real would need these)
+# openai # For OpenAI API
+# huggingface_hub # For Hugging Face API
+
+# Other utilities
+# python-dotenv # If using .env files (not directly used by v0, but common)

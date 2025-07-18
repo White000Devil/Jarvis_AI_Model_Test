@@ -33,6 +33,17 @@ learning:
   feedback_log_path: "data/feedback_logs/feedback.jsonl"
   scraping_log_path: "data/scraping_logs/scraping.jsonl"
 
+realtime_feeds: # NEW SECTION FOR REAL-TIME DATA COLLECTION
+  enabled: True
+  interval_seconds: 300 # How often to check for new data (e.g., every 5 minutes)
+  sources:
+    - name: "security_news_feed"
+      type: "security_news" # Corresponds to a method in KnowledgeIntegrator
+      query: "cybersecurity" # Query for the news API
+    - name: "threat_intelligence_feed"
+      type: "threat_intelligence" # Corresponds to a method in KnowledgeIntegrator
+      query: "latest vulnerabilities" # Query for threat intel API
+
 voice:
   enabled: True # Set to True to enable voice interface (requires additional packages)
   wake_word: "jarvis"
@@ -44,6 +55,8 @@ api_integrations:
   weather_api_key: "YOUR_WEATHER_API_KEY" # Replace with actual API key
   openai_api_key: "your_openai_api_key_here" # Replace with your actual key
   huggingface_api_key: "your_huggingface_api_key_here" # Replace with your actual key
+  # news_api_key: "YOUR_NEWS_API_KEY" # Add if you use a real news API
+  # threat_intel_api_key: "YOUR_THREAT_INTEL_API_KEY" # Add if you use a real threat intel API
   # Add other API keys as needed
 
 collaboration:

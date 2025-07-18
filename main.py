@@ -1,207 +1,251 @@
 import asyncio
-import argparse
 import yaml
-from pathlib import Path
+import os
 from typing import Dict, Any, Optional
-
-# Ensure project root is in sys.path for imports
-PROJECT_ROOT = Path(__file__).parent.parent
-import sys
-sys.path.append(str(PROJECT_ROOT))
-
 from utils.logger import setup_logging, logger
-from scripts.setup_environment import setup_environment, load_config
-
-# Import all core engines
 from core.nlp_engine import NLPEngine
 from core.memory_manager import MemoryManager
-from core.vision_engine import VisionEngine
-from core.knowledge_integrator import KnowledgeIntegrator
-from core.self_learning import SelfLearningEngine
-from core.voice_interface import VoiceInterface
 from core.api_integrations import APIIntegrations
-from core.collaboration_hub import CollaborationHub
-from core.deployment_manager import DeploymentManager
+from core.vision_engine import VisionEngine
 from core.ethical_ai import EthicalAIEngine
 from core.reasoning_engine import ReasoningEngine
 from core.human_ai_teaming import HumanAITeaming
 from core.self_correction import SelfCorrectionEngine
-
-# Import all UI interfaces
-from interface.chat_interface import ChatInterface
-from interface.vision.video_ui import VideoUI
-from interface.learning.feedback_ui import FeedbackUI
-from interface.admin.admin_dashboard import create_admin_dashboard # Function to create dashboard
+from core.self_learning import SelfLearningEngine
+from core.collaboration_hub import CollaborationHub
+from core.deployment_manager import DeploymentManager
+from core.voice_interface import VoiceInterface
 
 class JarvisAI:
     """
-    The main orchestrator for the JARVIS AI Assistant.
-    Initializes and manages all core engines and interfaces.
+    The main class for JARVIS AI, orchestrating all its core components.
     """
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
-        self.debug_mode = config.get("app", {}).get("debug", False)
-        
-        # Initialize core engines
-        self.nlp_engine = NLPEngine(config.get("nlp", {}))
-        self.memory_manager = MemoryManager(config.get("memory", {}))
-        self.api_integrations = APIIntegrations(config.get("api_integrations", {}))
-        self.vision_engine = VisionEngine(config.get("vision", {}))
-        self.knowledge_integrator = KnowledgeIntegrator(config.get("learning", {}), self.memory_manager)
-        self.self_learning_engine = SelfLearningEngine(self.memory_manager, config.get("learning", {}))
-        self.voice_interface = VoiceInterface(config.get("voice", {}))
-        self.collaboration_hub = CollaborationHub(config.get("collaboration", {}))
-        self.deployment_manager = DeploymentManager(config.get("deployment", {}))
-        self.ethical_ai_engine = EthicalAIEngine(self.memory_manager, config.get("ethical_ai", {}))
+    def __init__(self, config_path: str = "config.yaml"):
+        self.config = self._load_config(config_path)
+        setup_logging(debug=self.config["app"]["debug"], log_level=self.config["app"]["log_level"])
+        logger.info("Initializing JARVIS AI...")
+
+        # Initialize core components
+        self.api_integrations = APIIntegrations(self.config.get("api_integrations", {}))
+        self.memory_manager = MemoryManager(self.config.get("memory", {}))
+        self.nlp_engine = NLPEngine(self.config.get("nlp", {}))
+        self.vision_engine = VisionEngine(self.config.get("vision", {}))
+        self.ethical_ai_engine = EthicalAIEngine(self.memory_manager, self.config.get("ethical_ai", {}))
         self.reasoning_engine = ReasoningEngine(
-            self.nlp_engine, self.memory_manager, self.api_integrations,
-            self.vision_engine, self.ethical_ai_engine, config.get("reasoning", {})
+            self.nlp_engine, self.memory_manager, self.api_integrations, 
+            self.vision_engine, self.ethical_ai_engine, self.config.get("reasoning", {})
         )
         self.human_ai_teaming = HumanAITeaming(
-            self.nlp_engine, self.memory_manager, self.collaboration_hub, config.get("human_ai_teaming", {})
+            self.nlp_engine, self.memory_manager, 
+            CollaborationHub(self.config.get("collaboration", {})), # Pass CollaborationHub instance
+            self.config.get("human_ai_teaming", {})
         )
         self.self_correction_engine = SelfCorrectionEngine(
-            self.nlp_engine, self.memory_manager, self.ethical_ai_engine, config.get("self_correction", {})
+            self.nlp_engine, self.memory_manager, self.ethical_ai_engine, self.config.get("self_correction", {})
         )
+        self.knowledge_integrator = KnowledgeIntegrator(
+            self.config.get("learning", {}), self.memory_manager, self.api_integrations # Pass APIIntegrations
+        )
+        self.self_learning_engine = SelfLearningEngine(
+            self.memory_manager, self.knowledge_integrator, self.config.get("learning", {})
+        )
+        self.collaboration_hub = CollaborationHub(self.config.get("collaboration", {}))
+        self.deployment_manager = DeploymentManager(self.config.get("deployment", {}))
+        self.voice_interface = VoiceInterface(self.config.get("voice", {}))
 
-        logger.info("All JARVIS AI core engines initialized.")
+        self.realtime_monitoring_task: Optional[asyncio.Task] = None
+        logger.info("JARVIS AI initialized successfully.")
 
-    async def chat(self, user_input: str) -> str:
+    async def __aenter__(self):
+        """Context manager entry point for async setup."""
+        logger.info("Starting JARVIS AI services...")
+        # Start API integrations client
+        await self.api_integrations.__aenter__()
+        # Start real-time monitoring if enabled
+        if self.config.get("realtime_feeds", {}).get("enabled", False):
+            interval = self.config["realtime_feeds"].get("interval_seconds", 300)
+            self.realtime_monitoring_task = asyncio.create_task(
+                self._run_realtime_monitoring(interval)
+            )
+            logger.info(f"Real-time monitoring started with interval: {interval} seconds.")
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit point for async cleanup."""
+        logger.info("Shutting down JARVIS AI services...")
+        # Cancel real-time monitoring task
+        if self.realtime_monitoring_task:
+            self.realtime_monitoring_task.cancel()
+            try:
+                await self.realtime_monitoring_task
+            except asyncio.CancelledError:
+                logger.info("Real-time monitoring task cancelled.")
+        # Close API integrations client
+        await self.api_integrations.__aexit__(exc_type, exc_val, exc_tb)
+        self.memory_manager.persist_memory() # Persist ChromaDB on exit
+        logger.info("JARVIS AI shutdown complete.")
+
+    def _load_config(self, config_path: str) -> Dict[str, Any]:
+        """Loads configuration from a YAML file."""
+        if not os.path.exists(config_path):
+            logger.error(f"Config file not found at {config_path}")
+            raise FileNotFoundError(f"Config file not found at {config_path}")
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        return config
+
+    async def _run_realtime_monitoring(self, interval_seconds: int):
+        """Background task to periodically run real-time feed monitoring."""
+        while True:
+            try:
+                await self.knowledge_integrator.monitor_realtime_feeds()
+            except Exception as e:
+                logger.error(f"Error during real-time monitoring cycle: {e}")
+            await asyncio.sleep(interval_seconds)
+
+    async def process_user_input(self, user_input: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
         """
-        Processes a user's chat input through the entire JARVIS pipeline.
+        Processes a user's input through the entire JARVIS AI pipeline.
         """
-        logger.info(f"Processing chat input: '{user_input}'")
-        
+        if context is None:
+            context = {}
+
+        logger.info(f"Processing user input: '{user_input}'")
+
         # 1. NLP Processing
-        nlp_result = await self.nlp_engine.process_query(user_input)
-        intent = nlp_result["metadata"]["intent"]
-        confidence = nlp_result["metadata"]["confidence"]
-        
-        # 2. Human-AI Teaming: Clarification
-        clarification_needed = await self.human_ai_teaming.clarify_request(user_input, confidence, nlp_result["metadata"])
-        if clarification_needed:
-            return clarification_needed
+        nlp_result = await self.nlp_engine.process_query(user_input, context)
+        context["nlp_intent"] = nlp_result["metadata"]["intent"]
+        context["nlp_confidence"] = nlp_result["metadata"]["confidence"]
+        context["nlp_entities"] = nlp_result["metadata"]["entities"]
+        context["nlp_summary"] = nlp_result["metadata"]["summary"]
+        logger.debug(f"NLP Result: {nlp_result}")
 
-        # 3. Reasoning Engine: Formulate a plan/response
-        reasoning_context = {
-            "nlp_confidence": confidence,
-            "user_role": "admin" # Example: could be dynamic based on auth
-        }
-        reasoning_output = await self.reasoning_engine.reason_on_query(user_input, nlp_result, reasoning_context)
+        # 2. Memory Recall (retrieve relevant past conversations and knowledge)
+        conversation_history = await self.memory_manager.search_conversations(user_input, limit=3)
+        knowledge_recall = await self.memory_manager.search_knowledge(user_input, limit=2)
+        security_knowledge_recall = await self.memory_manager.search_security_knowledge(user_input, limit=2)
+        
+        context["conversation_history"] = conversation_history
+        context["knowledge_recall"] = knowledge_recall
+        context["security_knowledge_recall"] = security_knowledge_recall
+        logger.debug(f"Memory Recall: {len(conversation_history)} convs, {len(knowledge_recall)} kb, {len(security_knowledge_recall)} sec_kb")
+
+        # 3. Reasoning and Planning
+        reasoning_output = await self.reasoning_engine.reason_on_query(user_input, nlp_result, context)
         jarvis_response = reasoning_output["response"]
+        context["reasoning_steps"] = reasoning_output["reasoning_steps"]
+        context["final_plan"] = reasoning_output["final_plan"]
+        context["jarvis_confidence"] = reasoning_output["confidence"]
+        logger.debug(f"Reasoning Output: {reasoning_output}")
+
+        # 4. Self-Correction (assess confidence and consistency)
+        confidence = await self.self_correction_engine.assess_confidence(jarvis_response, context)
+        is_inconsistent, inconsistency_reason = await self.self_correction_engine.detect_inconsistency(jarvis_response, conversation_history)
         
-        # 4. Ethical AI: Check and apply guardrails
-        is_ethical, violations = await self.ethical_ai_engine.check_response_for_ethics(user_input, jarvis_response, reasoning_output)
+        context["confidence_score"] = confidence
+        context["is_inconsistent"] = is_inconsistent
+        context["inconsistency_reason"] = inconsistency_reason
+
+        if confidence < self.self_correction_engine.confidence_threshold:
+            logger.warning(f"Low confidence ({confidence:.2f}) detected. Triggering self-correction.")
+            jarvis_response = await self.self_correction_engine.propose_correction(
+                jarvis_response, "low_confidence", user_input, context
+            )
+            context["self_corrected"] = True
+        elif is_inconsistent:
+            logger.warning(f"Inconsistency detected. Triggering self-correction: {inconsistency_reason}")
+            jarvis_response = await self.self_correction_engine.propose_correction(
+                jarvis_response, f"inconsistency: {inconsistency_reason}", user_input, context
+            )
+            context["self_corrected"] = True
+        else:
+            context["self_corrected"] = False
+        logger.debug(f"Self-Correction Applied: {context['self_corrected']}")
+
+        # 5. Ethical AI Check
+        is_ethical, ethical_violations = await self.ethical_ai_engine.check_response_for_ethics(user_input, jarvis_response, context)
+        context["ethical_violations"] = ethical_violations
+        context["is_ethical"] = is_ethical
+
         if not is_ethical:
-            jarvis_response = await self.ethical_ai_engine.apply_ethical_guardrails(user_input, jarvis_response, violations)
-            logger.warning(f"Ethical guardrails applied to response: {jarvis_response}")
+            logger.warning("Ethical violation detected. Applying guardrails.")
+            jarvis_response = await self.ethical_ai_engine.apply_ethical_guardrails(user_input, jarvis_response, ethical_violations)
+            context["ethical_guardrail_applied"] = True
+        else:
+            context["ethical_guardrail_applied"] = False
+        logger.debug(f"Ethical Guardrail Applied: {context['ethical_guardrail_applied']}")
 
-        # 5. Self-Correction: Assess and correct if needed
-        response_confidence = await self.self_correction_engine.assess_confidence(jarvis_response, {"nlp_confidence": confidence})
-        if response_confidence < self.self_correction_engine.confidence_threshold:
-            # Simulate searching memory for conflicting info
-            historical_context = await self.memory_manager.search_conversations(user_input, limit=3)
-            is_inconsistent, inconsistency_explanation = await self.self_correction_engine.detect_inconsistency(jarvis_response, historical_context)
-            
-            if is_inconsistent:
-                logger.warning(f"Inconsistency detected: {inconsistency_explanation}. Attempting self-correction.")
-                jarvis_response = await self.self_correction_engine.propose_correction(
-                    original_response=jarvis_response,
-                    error_explanation=inconsistency_explanation,
-                    user_input=user_input,
-                    context={"nlp_result": nlp_result, "reasoning_output": reasoning_output}
-                )
-            else:
-                logger.info(f"Response confidence {response_confidence:.2f} is low, but no inconsistency detected. Proceeding.")
+        # 6. Human-AI Teaming (adapt communication, clarify if needed)
+        clarification_needed = await self.human_ai_teaming.clarify_request(user_input, confidence, context)
+        if clarification_needed:
+            jarvis_response = clarification_needed
+            context["clarification_issued"] = True
+        else:
+            jarvis_response = await self.human_ai_teaming.adapt_communication(user_input, jarvis_response, context)
+            context["clarification_issued"] = False
+        logger.debug(f"Communication Adapted / Clarification: {context['clarification_issued']}")
 
-        # 6. Human-AI Teaming: Adapt communication style
-        jarvis_response = await self.human_ai_teaming.adapt_communication(user_input, jarvis_response, {"user_sentiment": nlp_result["metadata"].get("sentiment_label", "neutral")})
+        # 7. Memory Storage (store the interaction)
+        await self.memory_manager.add_conversation(user_input, jarvis_response, context)
+        logger.debug("Interaction stored in memory.")
 
-        # 7. Memory Management: Store conversation
-        await self.memory_manager.add_conversation(user_input, jarvis_response, nlp_result["metadata"])
-
-        logger.info(f"Final JARVIS response: '{jarvis_response}'")
-        return jarvis_response
+        final_response_data = {
+            "response": jarvis_response,
+            "context": context
+        }
+        logger.info("User input processing complete.")
+        return final_response_data
 
     async def run_chat_interface(self):
         """Runs the Gradio chat interface."""
-        chat_ui = ChatInterface(self).create_interface()
-        logger.info("Launching Chat Interface...")
-        chat_ui.launch(
-            server_name="0.0.0.0",
-            server_port=7860, # Default Gradio port
-            share=False,
-            debug=self.debug_mode
-        )
+        from interface.chat_interface import create_chat_interface
+        chat_ui = create_chat_interface(self)
+        logger.info("Starting chat interface...")
+        await chat_ui.launch(share=False, inbrowser=True)
 
     async def run_admin_dashboard(self):
         """Runs the Gradio admin dashboard."""
-        admin_dashboard_ui = create_admin_dashboard(
-            self.nlp_engine, self.memory_manager, self.api_integrations,
+        from interface.admin.admin_dashboard import create_admin_dashboard
+        admin_ui = create_admin_dashboard(
+            self.nlp_engine, self.memory_manager, self.api_integrations, 
             self.vision_engine, self.ethical_ai_engine, self.reasoning_engine,
-            self.human_ai_teaming, self.self_correction_engine,
-            self.self_learning_engine, self.collaboration_hub, self.deployment_manager,
-            self.voice_interface
+            self.human_ai_teaming, self.self_correction_engine, self.self_learning_engine,
+            self.collaboration_hub, self.deployment_manager, self.voice_interface
         )
-        logger.info("Launching Admin Dashboard...")
-        admin_dashboard_ui.launch(
-            server_name="0.0.0.0",
-            server_port=7862,
-            share=False,
-            debug=self.debug_mode
-        )
+        logger.info("Starting admin dashboard...")
+        await admin_ui.launch(share=False, inbrowser=True)
 
-    async def run_vision_ui(self):
+    async def run_feedback_ui(self):
+        """Runs the Gradio feedback UI."""
+        from interface.learning.feedback_ui import create_feedback_ui
+        feedback_ui = create_feedback_ui(self.self_learning_engine)
+        logger.info("Starting feedback UI...")
+        await feedback_ui.launch(share=False, inbrowser=True)
+
+    async def run_video_analysis_ui(self):
         """Runs the Gradio video analysis UI."""
-        vision_ui = VideoUI(self.vision_engine).create_interface()
-        logger.info("Launching Vision UI...")
-        vision_ui.launch(
-            server_name="0.0.0.0",
-            server_port=7861,
-            share=False,
-            debug=self.debug_mode
-        )
-
-    async def run_learning_ui(self):
-        """Runs the Gradio feedback and learning UI."""
-        learning_ui = FeedbackUI(self.self_learning_engine).create_interface()
-        logger.info("Launching Learning UI...")
-        learning_ui.launch(
-            server_name="0.0.0.0",
-            server_port=7863,
-            share=False,
-            debug=self.debug_mode
-        )
+        from interface.vision.video_ui import create_video_analysis_ui
+        video_ui = create_video_analysis_ui(self.vision_engine)
+        logger.info("Starting video analysis UI...")
+        await video_ui.launch(share=False, inbrowser=True)
 
 async def main():
-    parser = argparse.ArgumentParser(description="JARVIS AI Assistant")
-    parser.add_argument("--mode", type=str, default="chat",
-                        choices=["chat", "admin", "vision", "learning"],
-                        help="Mode to run JARVIS AI in (chat, admin, vision, learning)")
+    import argparse
+    parser = argparse.ArgumentParser(description="Run JARVIS AI in different modes.")
+    parser.add_argument("--mode", type=str, default="chat", 
+                        choices=["chat", "admin", "feedback", "video_analysis"],
+                        help="Mode to run JARVIS AI in (chat, admin, feedback, video_analysis).")
     args = parser.parse_args()
 
-    # Load configuration
-    config = load_config()
-
-    # Setup logging based on config
-    setup_logging(debug=config.get("app", {}).get("debug", False))
-    logger.info(f"Starting JARVIS AI in {args.mode} mode...")
-
-    # Ensure environment is set up (directories, dummy env vars)
-    setup_environment()
-
-    jarvis = JarvisAI(config)
-
-    if args.mode == "chat":
-        await jarvis.run_chat_interface()
-    elif args.mode == "admin":
-        await jarvis.run_admin_dashboard()
-    elif args.mode == "vision":
-        await jarvis.run_vision_ui()
-    elif args.mode == "learning":
-        await jarvis.run_learning_ui()
-    else:
-        logger.error(f"Unknown mode: {args.mode}")
+    async with JarvisAI() as jarvis:
+        if args.mode == "chat":
+            await jarvis.run_chat_interface()
+        elif args.mode == "admin":
+            await jarvis.run_admin_dashboard()
+        elif args.mode == "feedback":
+            await jarvis.run_feedback_ui()
+        elif args.mode == "video_analysis":
+            await jarvis.run_video_analysis_ui()
 
 if __name__ == "__main__":
     asyncio.run(main())

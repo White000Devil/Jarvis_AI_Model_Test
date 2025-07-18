@@ -1,25 +1,144 @@
 """
 Jarvis AI - Phase 2 Test Script
-Tests the functionality of the Vision Engine, Knowledge Integrator, and Video UI.
+Tests the functionality of the Vision Engine, Knowledge Integrator, Video UI, and API Integrations.
 """
 
 import asyncio
 import sys
+import os
 from pathlib import Path
 import json
 
 # Add project root to Python path
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.append(str(PROJECT_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from utils.logger import setup_logging, logger
+from core.api_integrations import APIIntegrations
 from core.vision_engine import VisionEngine
 from core.knowledge_integrator import KnowledgeIntegrator
-from core.memory_manager import MemoryManager # Needed for KnowledgeIntegrator
+from core.memory_manager import MemoryManager  # Needed for KnowledgeIntegrator
 from scripts.setup_environment import load_config
-from interface.vision.video_ui import test_video_ui # This will launch a Gradio UI
-from utils.logger import setup_logging, logger
+from interface.vision.video_ui import test_video_ui  # This will launch a Gradio UI
 import cv2
 import numpy as np
+
+# Mock configuration for testing
+TEST_CONFIG = {
+    "app": {"debug": True, "log_level": "DEBUG"},
+    "api_integrations": {
+        "security_api_key": "TEST_SECURITY_KEY",
+        "weather_api_key": "TEST_WEATHER_KEY",
+        "news_api_key": "TEST_NEWS_KEY",  # Added for real-time feeds
+        "threat_intel_api_key": "TEST_THREAT_INTEL_KEY"  # Added for real-time feeds
+    },
+    "vision": {
+        "enabled": True,
+        "model_name": "yolo-v8-nano",
+        "cache_dir": "data/test_vision_cache",
+        "video_analysis_cache_size_mb": 100
+    }
+}
+
+async def test_api_integrations():
+    logger.info("--- Testing API Integrations ---")
+    api_integrations = APIIntegrations(TEST_CONFIG["api_integrations"])
+
+    # Test 1: Security Analysis (mocked)
+    sec_result = await api_integrations.security_analysis("example.com")
+    assert sec_result["status"] == "completed", f"Test 1 Failed: Expected 'completed', got {sec_result['status']}"
+    assert "vulnerabilities_found" in sec_result["results"], "Test 1 Failed: Missing vulnerabilities_found"
+    logger.info("Test 1 (Security Analysis Mock) Passed.")
+
+    # Test 2: Get Weather (mocked)
+    weather_result = await api_integrations.get_weather("London")
+    assert weather_result["status"] == "completed", f"Test 2 Failed: Expected 'completed', got {weather_result['status']}"
+    assert "temperature_celsius" in weather_result, "Test 2 Failed: Missing temperature"
+    logger.info("Test 2 (Get Weather Mock) Passed.")
+
+    # Test 3: Get External Knowledge (mocked)
+    kb_result = await api_integrations.get_external_knowledge("quantum physics")
+    assert kb_result is not None, "Test 3 Failed: Expected knowledge content"
+    assert "mock-knowledge-base" in kb_result, "Test 3 Failed: Expected mock content"
+    logger.info("Test 3 (Get External Knowledge Mock) Passed.")
+
+    # Test 4: Send Notification (mocked)
+    notif_result = await api_integrations.send_notification("test@example.com", "Hello from JARVIS")
+    assert notif_result is True, "Test 4 Failed: Expected notification to be sent"
+    logger.info("Test 4 (Send Notification Mock) Passed.")
+
+    # Test 5: Fetch Real-time News (mocked)
+    news_result = await api_integrations.fetch_realtime_news("cybersecurity")
+    assert news_result["status"] == "success", f"Test 5 Failed: Expected 'success', got {news_result['status']}"
+    assert len(news_result["articles"]) > 0, "Test 5 Failed: Expected news articles"
+    logger.info("Test 5 (Fetch Real-time News Mock) Passed.")
+
+    # Test 6: Fetch Threat Intelligence (mocked)
+    threat_result = await api_integrations.fetch_threat_intelligence("ransomware")
+    assert threat_result["status"] == "success", f"Test 6 Failed: Expected 'success', got {threat_result['status']}"
+    assert len(threat_result["threats"]) > 0, "Test 6 Failed: Expected threat intelligence"
+    logger.info("Test 6 (Fetch Threat Intelligence Mock) Passed.")
+
+    # Test 7: API Stats
+    stats = api_integrations.get_api_stats()
+    assert stats["total_requests"] >= 6, "Test 7 Failed: Total requests count incorrect"
+    assert stats["successful_requests"] >= 6, "Test 7 Failed: Successful requests count incorrect"
+    logger.info("Test 7 (API Stats) Passed.")
+
+    logger.info("--- API Integrations Tests Passed ---")
+    return True
+
+async def test_vision_engine():
+    logger.info("--- Testing Vision Engine ---")
+    # Ensure a clean test cache
+    if os.path.exists(TEST_CONFIG["vision"]["cache_dir"]):
+        import shutil
+        shutil.rmtree(TEST_CONFIG["vision"]["cache_dir"])
+        logger.info(f"Cleaned up old test Vision cache at {TEST_CONFIG['vision']['cache_dir']}")
+    os.makedirs(TEST_CONFIG["vision"]["cache_dir"], exist_ok=True)
+
+    vision_engine = VisionEngine(TEST_CONFIG["vision"])
+
+    # Test 1: Analyze Image (mocked)
+    # Create a dummy image file for testing
+    dummy_image_path = os.path.join(TEST_CONFIG["vision"]["cache_dir"], "dummy_image.jpg")
+    with open(dummy_image_path, "w") as f:
+        f.write("dummy image content")  # Just need a file to exist
+
+    img_result = await vision_engine.analyze_image(dummy_image_path)
+    assert img_result["status"] == "success", f"Test 1 Failed: Expected 'success', got {img_result['status']}"
+    assert len(img_result["objects"]) > 0, "Test 1 Failed: Expected detected objects"
+    logger.info("Test 1 (Analyze Image Mock) Passed.")
+
+    # Test 2: Analyze Video Stream (mocked)
+    stream_result = await vision_engine.analyze_video_stream("rtsp://mock.stream/live", duration_seconds=3)
+    assert stream_result["status"] == "success", f"Test 2 Failed: Expected 'success', got {stream_result['status']}"
+    assert len(stream_result["events"]) > 0, "Test 2 Failed: Expected detected events"
+    logger.info("Test 2 (Analyze Video Stream Mock) Passed.")
+
+    # Test 3: Facial Recognition (mocked)
+    face_result = await vision_engine.facial_recognition(dummy_image_path)
+    assert face_result["status"] == "success", f"Test 3 Failed: Expected 'success', got {face_result['status']}"
+    assert len(face_result["faces"]) > 0, "Test 3 Failed: Expected detected faces"
+    logger.info("Test 3 (Facial Recognition Mock) Passed.")
+
+    # Test 4: Process Video File (mocked)
+    dummy_video_path = os.path.join(TEST_CONFIG["vision"]["cache_dir"], "dummy_video.mp4")
+    with open(dummy_video_path, "w") as f:
+        f.write("dummy video content")  # Just need a file to exist
+
+    video_file_result = await vision_engine.process_video_file(dummy_video_path)
+    assert video_file_result["status"] == "success", f"Test 4 Failed: Expected 'success', got {video_file_result['status']}"
+    assert len(video_file_result["analysis_results"]) > 0, "Test 4 Failed: Expected video analysis results"
+    logger.info("Test 4 (Process Video File Mock) Passed.")
+
+    # Clean up test cache
+    if os.path.exists(TEST_CONFIG["vision"]["cache_dir"]):
+        import shutil
+        shutil.rmtree(TEST_CONFIG["vision"]["cache_dir"])
+        logger.info(f"Cleaned up test Vision cache at {TEST_CONFIG['vision']['cache_dir']}")
+
+    logger.info("--- Vision Engine Tests Passed ---")
+    return True
 
 async def test_phase2():
     """Tests Vision Engine and Knowledge Integrator functionalities."""
@@ -29,7 +148,7 @@ async def test_phase2():
     
     # Initialize components
     vision_engine = VisionEngine(config)
-    memory_manager = MemoryManager(config) # KnowledgeIntegrator depends on MemoryManager
+    memory_manager = MemoryManager(config)  # KnowledgeIntegrator depends on MemoryManager
     knowledge_integrator = KnowledgeIntegrator(config, memory_manager)
 
     # Test 1: Vision Engine - Video Analysis (Mock)
@@ -136,36 +255,17 @@ async def create_test_video():
 
 async def main():
     """Run all Phase 2 tests"""
-    setup_logging(debug=True) # Ensure logging is set up for tests
+    setup_logging(debug=True, log_level="DEBUG")
     logger.info("🧪 Running JARVIS AI Phase 2 Tests...")
     
-    results = {
-        "vision_engine": False,
-        "knowledge_integrator": False,
-        "video_ui": False # Note: video_ui test requires manual interaction
-    }
-    
-    logger.info("\n--- Testing Vision Engine ---")
-    results["vision_engine"] = await test_phase2()
-    
-    logger.info("\n--- Testing Knowledge Integrator ---")
-    results["knowledge_integrator"] = await test_phase2()
-    
-    logger.info("\n--- Testing Video UI (Requires Manual Interaction) ---")
-    logger.info("Please open the Gradio link that appears and interact with the UI.")
-    logger.info("Upload a dummy file for video analysis, and try the screen recording.")
-    results["video_ui"] = await test_video_ui() # This will block until manual exit or server stop
-    
-    logger.info("\n--- Phase 2 Test Summary ---")
-    for test_name, passed in results.items():
-        status = "✅ PASSED" if passed else "❌ FAILED"
-        logger.info(f"{test_name.replace('_', ' ').title()}: {status}")
-    
-    all_passed = all(results.values())
-    final_status = "🎉 All Phase 2 tests passed!" if all_passed else "⚠️ Some Phase 2 tests failed."
-    logger.info(f"\n{final_status}")
-    
-    return all_passed
+    api_passed = await test_api_integrations()
+    vision_passed = await test_vision_engine()
+    phase2_passed = await test_phase2()
+
+    if api_passed and vision_passed and phase2_passed:
+        logger.info("--- All Phase 2 Tests Passed Successfully! ---")
+    else:
+        logger.error("--- Some Phase 2 Tests Failed. Review logs for details. ---")
 
 if __name__ == "__main__":
     asyncio.run(main())

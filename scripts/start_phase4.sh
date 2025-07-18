@@ -15,7 +15,7 @@ echo "🧪 Running Phase 4 tests..."
 python scripts/test_phase4.py
 
 # This script starts JARVIS AI in chat mode for Phase 4.
-echo "Launching JARVIS AI in chat mode..."
+echo "Starting JARVIS AI in chat mode with Phase 4 capabilities..."
 python3 main.py --mode chat
 if [ $? -ne 0 ]; then
     echo "JARVIS AI failed to start."

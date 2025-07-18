@@ -2,28 +2,50 @@ import asyncio
 import sys
 from pathlib import Path
 import json
+import os
 
 # Add project root to Python path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.append(str(PROJECT_ROOT))
 
-from core.voice_interface import VoiceInterface
+from core.nlp_engine import NLPEngine
+from core.memory_manager import MemoryManager
 from core.api_integrations import APIIntegrations
+from core.vision_engine import VisionEngine
+from core.knowledge_integrator import KnowledgeIntegrator
+from core.self_learning import SelfLearningEngine
+from core.voice_interface import VoiceInterface
 from core.collaboration_hub import CollaborationHub
 from core.deployment_manager import DeploymentManager
-from scripts.setup_environment import load_config
+from scripts.setup_environment import load_config, setup_directories
 from utils.logger import setup_logging, logger
+from core.ethical_ai import EthicalAIEngine
+from core.human_ai_teaming import HumanAITeaming
+from core.self_correction import SelfCorrectionEngine
+
+# Mock configuration for testing
+TEST_CONFIG = {
+    "app": {"debug": True, "log_level": "DEBUG"},
+    "nlp": {"model_name": "distilbert-base-uncased", "max_seq_length": 128},
+    "memory": {"db_type": "chromadb", "chroma_path": "data/test_chroma_db_p4", "embedding_model": "all-MiniLM-L6-v2"},
+    "ethical_ai": {"enabled": True, "violation_threshold": 0.7, "log_violations": False},
+    "human_ai_teaming": {"enabled": True, "adaptive_communication_enabled": True, "clarification_threshold": 0.4},
+    "self_correction": {"enabled": True, "confidence_threshold": 0.6, "inconsistency_threshold": 0.3, "log_corrections": False},
+    "collaboration": {"enabled": True, "server_port": 8081, "max_active_sessions": 5} # Enable collaboration for testing
+}
 
 async def main():
     """Run all Phase 4 tests"""
-    setup_logging(debug=True) # Ensure logging is set up for tests
-    print("🧪 Running JARVIS AI Phase 4 Tests...")
+    setup_logging(debug=True, log_level="DEBUG") # Ensure logging is set up for tests
+    logger.info("--- Running JARVIS AI Phase 4 Tests...")
     
     results = {
         "voice_interface": False,
         "api_integrations": False,
         "collaboration_hub": False,
-        "deployment_manager": False
+        "deployment_manager": False,
+        "human_ai_teaming": False,
+        "self_correction_engine": False
     }
     
     print("\n--- Testing Voice Interface ---")
@@ -37,6 +59,12 @@ async def main():
 
     print("\n--- Testing Deployment Manager ---")
     results["deployment_manager"] = await test_deployment_manager()
+    
+    print("\n--- Testing Human-AI Teaming ---")
+    results["human_ai_teaming"] = await test_human_ai_teaming()
+    
+    print("\n--- Testing Self-Correction Engine ---")
+    results["self_correction_engine"] = await test_self_correction_engine()
     
     print("\n--- Phase 4 Test Summary ---")
     for test_name, passed in results.items():
@@ -244,6 +272,119 @@ async def test_deployment_manager():
         logger.info("Test 6 Skipped: No Docker deployment ID to undeploy.")
 
     logger.info("--- All Deployment Manager Tests Completed Successfully! ---")
+    return True
+
+async def test_human_ai_teaming():
+    logger.info("--- Testing Human-AI Teaming ---")
+    
+    # Initialize mock dependencies
+    class MockNLPEngine:
+        async def process_query(self, query, context=None):
+            return {"metadata": {"intent": "general_query", "confidence": 0.5, "entities": []}, "content": query}
+    class MockMemoryManager:
+        def __init__(self): pass
+        async def search_conversations(self, query, limit=5): return []
+    class MockCollaborationHub:
+        def __init__(self, config): self.enabled = config.get("enabled", False)
+        async def update_shared_context(self, session_id, key, value): return True
+
+    mock_nlp = MockNLPEngine()
+    mock_memory = MockMemoryManager()
+    mock_collaboration = MockCollaborationHub(TEST_CONFIG["collaboration"]) # Pass config
+    human_ai_teaming = HumanAITeaming(mock_nlp, mock_memory, mock_collaboration, TEST_CONFIG["human_ai_teaming"])
+
+    # Test 1: Clarification needed (low confidence)
+    clarification = await human_ai_teaming.clarify_request("Tell me about it.", 0.3, {"intent": "general_query"})
+    assert "more specific" in clarification, "Test 1 Failed: Expected clarification for low confidence"
+    logger.info("Test 1 (Clarification Needed) Passed.")
+
+    # Test 2: No clarification needed (high confidence)
+    clarification = await human_ai_teaming.clarify_request("What is the capital of France?", 0.8, {"intent": "general_query"})
+    assert clarification is None, "Test 2 Failed: Expected no clarification for high confidence"
+    logger.info("Test 2 (No Clarification) Passed.")
+
+    # Test 3: Adaptive communication (negative sentiment)
+    adapted_response = await human_ai_teaming.adapt_communication(
+        "I am very frustrated.", "I can help you.", {"user_sentiment": "negative"}
+    )
+    assert "I understand" in adapted_response, "Test 3 Failed: Expected empathetic tone"
+    logger.info("Test 3 (Adaptive Communication Negative) Passed.")
+
+    # Test 4: Adaptive communication (positive sentiment)
+    adapted_response = await human_ai_teaming.adapt_communication(
+        "This is great!", "I have completed the task.", {"user_sentiment": "positive"}
+    )
+    assert "Great!" in adapted_response, "Test 4 Failed: Expected encouraging tone"
+    logger.info("Test 4 (Adaptive Communication Positive) Passed.")
+
+    # Test 5: Share context with human (mocked collaboration hub)
+    shared = await human_ai_teaming.share_context_with_human("session_123", {"current_task": "analysis"})
+    assert shared is True, "Test 5 Failed: Expected context to be shared"
+    logger.info("Test 5 (Share Context) Passed.")
+
+    logger.info("--- Human-AI Teaming Tests Passed ---")
+    return True
+
+async def test_self_correction_engine():
+    logger.info("--- Testing Self-Correction Engine ---")
+    
+    # Initialize mock dependencies
+    class MockNLPEngine:
+        async def process_query(self, query, context=None):
+            return {"metadata": {"intent": "general_query", "confidence": 0.5}, "content": query}
+    class MockMemoryManager:
+        def __init__(self):
+            self.conversations = []
+        async def search_conversations(self, query, limit=5):
+            return self.conversations
+    class MockEthicalAIEngine:
+        def __init__(self): self.enabled = True
+        async def check_response_for_ethics(self, u, r, c): return True, []
+        async def apply_ethical_guardrails(self, u, r, v): return r
+
+    mock_nlp = MockNLPEngine()
+    mock_memory = MockMemoryManager()
+    mock_ethical = MockEthicalAIEngine()
+    self_correction_engine = SelfCorrectionEngine(mock_nlp, mock_memory, mock_ethical, TEST_CONFIG["self_correction"])
+
+    # Test 1: Assess confidence (low confidence)
+    confidence = await self_correction_engine.assess_confidence("This is a response.", {"nlp_confidence": 0.3})
+    assert confidence < TEST_CONFIG["self_correction"]["confidence_threshold"], "Test 1 Failed: Expected low confidence"
+    logger.info("Test 1 (Assess Confidence Low) Passed.")
+
+    # Test 2: Assess confidence (high confidence)
+    confidence = await self_correction_engine.assess_confidence("This is a confident response.", {"nlp_confidence": 0.9})
+    assert confidence > TEST_CONFIG["self_correction"]["confidence_threshold"], "Test 2 Failed: Expected high confidence"
+    logger.info("Test 2 (Assess Confidence High) Passed.")
+
+    # Test 3: Detect inconsistency (no inconsistency)
+    mock_memory.conversations = [{"metadata": {"jarvis_response": "The sky is blue."}}]
+    is_inconsistent, reason = await self_correction_engine.detect_inconsistency("The sky is blue.", mock_memory.conversations)
+    assert is_inconsistent is False, "Test 3 Failed: Expected no inconsistency"
+    logger.info("Test 3 (Detect Inconsistency - No) Passed.")
+
+    # Test 4: Detect inconsistency (inconsistency)
+    mock_memory.conversations = [{"metadata": {"jarvis_response": "The sky is green."}}]
+    is_inconsistent, reason = await self_correction_engine.detect_inconsistency("The sky is blue.", mock_memory.conversations)
+    assert is_inconsistent is True, "Test 4 Failed: Expected inconsistency"
+    assert "contradicts" in reason, "Test 4 Failed: Expected reason for inconsistency"
+    logger.info("Test 4 (Detect Inconsistency - Yes) Passed.")
+
+    # Test 5: Propose correction (low confidence)
+    corrected_response = await self_correction_engine.propose_correction(
+        "Original low confidence response.", "low_confidence", "user query", {"nlp_confidence": 0.3}
+    )
+    assert "not entirely confident" in corrected_response, "Test 5 Failed: Expected low confidence correction"
+    logger.info("Test 5 (Propose Correction - Low Confidence) Passed.")
+
+    # Test 6: Propose correction (inconsistency)
+    corrected_response = await self_correction_engine.propose_correction(
+        "Original inconsistent response.", "inconsistency: Direct contradiction about sky color.", "user query", {}
+    )
+    assert "My apologies for the previous misinformation" in corrected_response, "Test 6 Failed: Expected inconsistency correction"
+    logger.info("Test 6 (Propose Correction - Inconsistency) Passed.")
+
+    logger.info("--- Self-Correction Engine Tests Passed ---")
     return True
 
 if __name__ == "__main__":

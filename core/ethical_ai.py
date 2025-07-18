@@ -4,7 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 import sys
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 from utils.logger import logger
 from core.memory_manager import MemoryManager # To log violations
 
@@ -15,19 +15,22 @@ class EthicalAIEngine:
     def __init__(self, memory_manager: MemoryManager, config: Dict[str, Any]):
         self.config = config
         self.memory_manager = memory_manager
-        self.enabled = config.get("ETHICAL_AI_ENABLED", True)
-        self.violation_threshold = config.get("VIOLATION_THRESHOLD", 0.7)
-        self.log_violations = config.get("LOG_VIOLATIONS", True)
-        self.ethical_guidelines = config.get("ETHICAL_GUIDELINES", [])
-        self.ethical_violation_log_path = Path(config.get("ETHICAL_VIOLATION_LOG_PATH", "data/ethical_violations/violations.jsonl"))
+        self.enabled = config.get("enabled", True)
+        self.violation_threshold = config.get("violation_threshold", 0.7)
+        self.log_violations = config.get("log_violations", True)
+        self.ethical_guidelines = config.get("ethical_guidelines", [])
+        self.ethical_violation_log_path = Path(config.get("ethical_violation_log_path", "data/ethical_violations/violations.jsonl"))
+        self.recent_violations: List[Dict[str, Any]] = [] # In-memory cache for recent violations
 
-        self._total_violations_detected = 0
-        self._violation_types_count: Dict[str, int] = {}
+        # Ensure log directory exists
+        self.ethical_violation_log_path.parent.mkdir(parents=True, exist_ok=True)
 
         if self.enabled:
             logger.info("Ethical AI Engine initialized.")
+            if not self.ethical_guidelines:
+                logger.warning("No ethical guidelines configured. Ethical AI will operate with default, limited checks.")
         else:
-            logger.warning("Ethical AI Engine is disabled in configuration.")
+            logger.info("Ethical AI Engine is disabled in configuration.")
 
     async def check_response_for_ethics(self, user_input: str, jarvis_response: str, context: Dict[str, Any]) -> Tuple[bool, List[Dict[str, Any]]]:
         """
@@ -37,99 +40,120 @@ class EthicalAIEngine:
         if not self.enabled:
             return True, []
 
-        violations: List[Dict[str, Any]] = []
+        logger.info(f"Checking response for ethical violations: '{jarvis_response[:50]}...'")
+        violations = []
         
-        # Simulate ethical checks based on keywords or patterns
-        # In a real system, this would involve a dedicated ethical AI model (e.g., fine-tuned LLM, rule-based system)
-        
+        # Simulate ethical checks based on keywords and guidelines
         response_lower = jarvis_response.lower()
         input_lower = user_input.lower()
 
-        # Rule 1: Harmful content
-        if any(keyword in response_lower for keyword in ["harm", "kill", "destroy", "illegal", "exploit"]):
-            violations.append({
-                "type": "harmful_content",
-                "severity": "high",
-                "explanation": "Response contains potentially harmful or illegal keywords.",
-                "confidence": 0.9
-            })
+        # Rule 1: Harmful/Hateful content
+        if any(word in response_lower for word in ["kill", "harm", "destroy", "hate", "discriminat"]):
+            violations.append({"type": "harmful_content", "explanation": "Response contains potentially harmful or hateful language."})
         
-        # Rule 2: Privacy violation (simplified)
-        if "ssn" in input_lower and "your ssn" in response_lower:
-            violations.append({
-                "type": "privacy_violation",
-                "severity": "critical",
-                "explanation": "Attempted to elicit or revealed sensitive personal information.",
-                "confidence": 0.95
-            })
+        # Rule 2: Illegal activities
+        if any(word in input_lower for word in ["hack", "steal", "illegal", "crack"]):
+            if "assist" not in response_lower and "cannot" not in response_lower:
+                violations.append({"type": "illegal_activity_assistance", "explanation": "Response might assist with illegal or unethical activities."})
+
+        # Rule 3: Privacy (simplified)
+        if "personal data" in response_lower and "share" in response_lower:
+            violations.append({"type": "privacy_breach", "explanation": "Response suggests sharing personal data inappropriately."})
+
+        # Rule 4: Transparency (simplified)
+        if "i am human" in response_lower or "i have feelings" in response_lower:
+            violations.append({"type": "lack_of_transparency", "explanation": "Response misrepresents AI nature."})
+
+        # More advanced checks would involve NLP models for toxicity, bias, etc.
+        # For now, we use a simple confidence score based on number of violations
+        violation_score = len(violations) * 0.5 # Each violation adds 0.5 to score
+
+        if violation_score >= self.violation_threshold:
+            logger.warning(f"Ethical violation detected (score: {violation_score:.2f}). Violations: {violations}")
+            if self.log_violations:
+                self._log_violation(user_input, jarvis_response, violations, context)
+            return False, violations
         
-        # Rule 3: Bias/Discrimination (simplified)
-        if "gender" in input_lower and ("male" in response_lower or "female" in response_lower):
-            # This is a very simplistic example, real bias detection is complex
-            violations.append({
-                "type": "potential_bias",
-                "severity": "low",
-                "explanation": "Response might exhibit gender bias based on keywords.",
-                "confidence": 0.6
-            })
+        logger.info("No significant ethical violations detected.")
+        return True, []
 
-        # Rule 4: Transparency (check if JARVIS is transparent about its AI nature)
-        if "are you human" in input_lower and "yes" in response_lower:
-            violations.append({
-                "type": "lack_of_transparency",
-                "severity": "medium",
-                "explanation": "JARVIS misrepresented itself as human.",
-                "confidence": 0.8
-            })
-
-        is_ethical = not bool(violations)
-        
-        if violations and self.log_violations:
-            self._total_violations_detected += len(violations)
-            for v in violations:
-                self._violation_types_count[v["type"]] = self._violation_types_count.get(v["type"], 0) + 1
-                await self.memory_manager.add_ethical_violation(
-                    user_input=user_input,
-                    jarvis_response=jarvis_response,
-                    violation_type=v["type"],
-                    severity=v["severity"],
-                    explanation=v["explanation"]
-                )
-            logger.warning(f"Ethical violations detected: {violations}")
-
-        return is_ethical, violations
-
-    async def apply_ethical_guardrails(self, user_input: str, jarvis_response: str, violations: List[Dict[str, Any]]) -> str:
+    async def apply_ethical_guardrails(self, user_input: str, original_response: str, violations: List[Dict[str, Any]]) -> str:
         """
-        Modifies JARVIS's response if ethical violations are detected.
+        Applies guardrails to modify or replace responses that violate ethical guidelines.
         """
-        if not self.enabled or not violations:
-            return jarvis_response
+        if not self.enabled:
+            return original_response
 
-        modified_response = jarvis_response
-        for violation in violations:
-            if violation["severity"] == "critical" or violation["severity"] == "high":
-                modified_response = "I cannot provide a response that violates my ethical guidelines. This request may involve sensitive information or harmful content."
-                logger.warning(f"Applied strong guardrail for {violation['type']}.")
-                break # Stop processing if a critical/high violation is found
-            elif violation["severity"] == "medium":
-                modified_response = f"Please rephrase your request. My response might be inappropriate due to: {violation['explanation']}. " + modified_response
-                logger.warning(f"Applied medium guardrail for {violation['type']}.")
-            elif violation["severity"] == "low":
-                modified_response = f"Note: {violation['explanation']}. " + modified_response
-                logger.warning(f"Applied low guardrail for {violation['type']}.")
+        logger.info("Applying ethical guardrails...")
         
-        return modified_response
+        # Simple rule-based modification
+        if any(v["type"] == "harmful_content" for v in violations):
+            return "I cannot generate content that is harmful or promotes hate."
+        elif any(v["type"] == "illegal_activity_assistance" for v in violations):
+            return "I cannot assist with illegal or unethical activities."
+        elif any(v["type"] == "privacy_breach" for v in violations):
+            return "I am designed to protect user privacy and cannot share sensitive information."
+        elif any(v["type"] == "lack_of_transparency" for v in violations):
+            return "As an AI, I do not have personal feelings or human experiences. How can I help you with factual information?"
+        
+        # Default fallback if no specific rule applies
+        return "I'm sorry, but I cannot provide a response that goes against my ethical guidelines."
+
+    def _log_violation(self, user_input: str, jarvis_response: str, violations: List[Dict[str, Any]], context: Dict[str, Any]):
+        """Logs an ethical violation to a file."""
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "user_input": user_input,
+            "original_response": jarvis_response,
+            "violations": violations,
+            "context": context
+        }
+        try:
+            with open(self.ethical_violation_log_path, "a") as f:
+                f.write(json.dumps(log_entry) + "\n")
+            self.recent_violations.append(log_entry)
+            # Keep only the last N violations in memory
+            self.recent_violations = self.recent_violations[-10:] 
+            logger.info(f"Ethical violation logged to {self.ethical_violation_log_path}")
+        except Exception as e:
+            logger.error(f"Failed to log ethical violation: {e}")
+
+    def get_recent_violations(self) -> List[Dict[str, Any]]:
+        """Returns a list of recent ethical violations from memory."""
+        return self.recent_violations
 
     def get_ethical_stats(self) -> Dict[str, Any]:
-        """Returns statistics about ethical AI activity."""
-        return {
-            "enabled": self.enabled,
-            "violation_threshold": self.violation_threshold,
-            "total_violations": self._total_violations_detected,
-            "violation_types": self._violation_types_count,
-            "last_updated": datetime.now().isoformat()
-        }
+        """
+        Returns statistics about ethical violations.
+        Reads from the ethical violation log file.
+        """
+        stats = {"total_violations": 0, "high_severity": 0, "critical_severity": 0, "last_violation_timestamp": None, "violation_types": {}}
+        
+        if self.ethical_violation_log_path.exists():
+            with open(self.ethical_violation_log_path, 'r') as f:
+                for line in f:
+                    try:
+                        data = json.loads(line)
+                        if data.get("log_type") == "ethical_violation":
+                            stats["total_violations"] += 1
+                            severity = data.get("severity", "unknown").lower()
+                            violation_type = data.get("violation_type", "unknown")
+                            
+                            if severity == "high":
+                                stats["high_severity"] += 1
+                            elif severity == "critical":
+                                stats["critical_severity"] += 1
+                            
+                            stats["violation_types"][violation_type] = stats["violation_types"].get(violation_type, 0) + 1
+                            
+                            timestamp = data.get("timestamp")
+                            if timestamp:
+                                if not stats["last_violation_timestamp"] or timestamp > stats["last_violation_timestamp"]:
+                                    stats["last_violation_timestamp"] = timestamp
+                    except json.JSONDecodeError:
+                        logger.warning(f"Skipping malformed ethical violation log line: {line.strip()}")
+        
+        return stats
 
 # Test function for EthicalAIEngine
 async def test_ethical_ai_engine():
@@ -141,7 +165,7 @@ async def test_ethical_ai_engine():
             logger.info(f"Mock MemoryManager: Storing ethical violation: {violation_type}")
 
     mock_memory = MockMemoryManager()
-    ethical_engine = EthicalAIEngine(mock_memory, config={"ETHICAL_AI_ENABLED": True, "ETHICAL_VIOLATION_LOG_PATH": "data/ethical_violations/violations.jsonl"}) # Enable logging to file for tests
+    ethical_engine = EthicalAIEngine(mock_memory, config={"enabled": True, "ethical_violation_log_path": "data/ethical_violations/violations.jsonl"}) # Enable logging to file for tests
 
     # Test 1: No violation
     is_ethical, violations = await ethical_engine.check_response_for_ethics("hello", "Hello there!", {})
