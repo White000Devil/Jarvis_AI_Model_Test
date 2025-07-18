@@ -1,14 +1,15 @@
-import json
-from typing import Dict, Any, List, Optional
-from datetime import datetime
-from chromadb import Client, Settings
+import chromadb
 from chromadb.utils import embedding_functions
+from typing import Dict, Any, List, Optional
 from utils.logger import logger
+import os
+import json
+import time
 
 class MemoryManager:
     """
-    Manages JARVIS AI's long-term and short-term memory using ChromaDB.
-    Stores conversations, knowledge articles, and security-specific data.
+    Manages JARVIS AI's memory, including conversation history, general knowledge,
+    and security-specific knowledge using ChromaDB.
     """
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -17,179 +18,242 @@ class MemoryManager:
         self.embedding_model = config.get("embedding_model", "all-MiniLM-L6-v2")
 
         if self.db_type == "chromadb":
-            self.client = Client(Settings(persist_directory=self.chroma_path, anonymized_telemetry=False))
-            self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=self.embedding_model)
+            self.client = chromadb.PersistentClient(path=self.chroma_path)
+            self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name=self.embedding_model
+            )
             
             # Get or create collections
             self.conversations_collection = self.client.get_or_create_collection(
-                name="jarvis_conversations",
-                embedding_function=self.embedding_function
+                name="conversations", embedding_function=self.embedding_function
             )
             self.knowledge_collection = self.client.get_or_create_collection(
-                name="jarvis_knowledge",
-                embedding_function=self.embedding_function
+                name="general_knowledge", embedding_function=self.embedding_function
             )
             self.security_knowledge_collection = self.client.get_or_create_collection(
-                name="jarvis_security_knowledge",
-                embedding_function=self.embedding_function
+                name="security_knowledge", embedding_function=self.embedding_function
+            )
+            self.ethical_violations_collection = self.client.get_or_create_collection(
+                name="ethical_violations", embedding_function=self.embedding_function
             )
             logger.info(f"ChromaDB Memory Manager initialized at {self.chroma_path}")
         elif self.db_type == "neo4j":
-            logger.warning("Neo4j integration is a placeholder. Actual implementation required.")
-            # Placeholder for Neo4j connection
-            self.neo4j_driver = None # Replace with actual Neo4j driver
+            logger.warning("Neo4j integration is a placeholder. Requires Neo4j setup.")
+            # Placeholder for Neo4j client initialization
+            self.neo4j_client = None
         else:
             raise ValueError(f"Unsupported database type: {self.db_type}")
 
-    async def add_conversation(self, user_input: str, jarvis_response: str, metadata: Dict[str, Any]):
-        """Adds a conversation turn to memory."""
+    def persist_memory(self):
+        """
+        Ensures ChromaDB data is written to disk.
+        For PersistentClient, this is often handled automatically on shutdown,
+        but explicit calls can be useful.
+        """
         if self.db_type == "chromadb":
-            doc_id = f"conv_{datetime.now().timestamp()}"
-            content = f"User: {user_input}\nJARVIS: {jarvis_response}"
-            full_metadata = {
-                "timestamp": datetime.now().isoformat(),
-                "user_input": user_input,
-                "jarvis_response": jarvis_response,
-                **metadata
-            }
+            # ChromaDB PersistentClient handles persistence automatically on exit
+            # or when the client object is garbage collected.
+            # No explicit 'save' method is typically needed.
+            logger.info("ChromaDB memory persistence handled automatically by PersistentClient.")
+        elif self.db_type == "neo4j":
+            logger.info("Neo4j persistence is handled by the Neo4j database itself.")
+
+    async def add_conversation(self, user_message: str, jarvis_response: str, metadata: Dict[str, Any]):
+        """
+        Adds a conversation turn to memory.
+        """
+        if self.db_type == "chromadb":
+            content = f"User: {user_message}\nJARVIS: {jarvis_response}"
+            doc_id = f"conv_{int(time.time() * 1000)}_{len(self.conversations_collection.peek()['ids'])}"
+            
+            # Ensure metadata is JSON serializable
+            safe_metadata = {k: v for k, v in metadata.items() if isinstance(v, (str, int, float, bool, type(None)))}
+            safe_metadata["user_message"] = user_message
+            safe_metadata["jarvis_response"] = jarvis_response
+            safe_metadata["timestamp"] = time.time()
+
             self.conversations_collection.add(
                 documents=[content],
-                metadatas=[full_metadata],
+                metadatas=[safe_metadata],
                 ids=[doc_id]
             )
-            logger.debug(f"Conversation added: {doc_id}")
+            logger.debug(f"Added conversation to ChromaDB: {doc_id}")
         elif self.db_type == "neo4j":
-            logger.info("Adding conversation to Neo4j (placeholder).")
-            # Neo4j implementation here
-        
+            # Placeholder for Neo4j
+            logger.info(f"Mock: Added conversation to Neo4j: {user_message} -> {jarvis_response}")
+
     async def search_conversations(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Searches past conversations for relevant context."""
+        """
+        Searches conversation history for relevant turns.
+        """
         if self.db_type == "chromadb":
             results = self.conversations_collection.query(
                 query_texts=[query],
                 n_results=limit,
-                include=["documents", "metadatas", "distances"]
+                include=['documents', 'metadatas', 'distances']
             )
-            formatted_results = []
-            if results and results["documents"]:
-                for i in range(len(results["documents"][0])):
-                    formatted_results.append({
-                        "content": results["documents"][0][i],
-                        "metadata": results["metadatas"][0][i],
-                        "distance": results["distances"][0][i]
+            parsed_results = []
+            if results and results['documents']:
+                for i in range(len(results['documents'][0])):
+                    parsed_results.append({
+                        "content": results['documents'][0][i],
+                        "metadata": results['metadatas'][0][i],
+                        "distance": results['distances'][0][i]
                     })
-            logger.debug(f"Searched conversations for '{query}', found {len(formatted_results)} results.")
-            return formatted_results
+            logger.debug(f"Searched conversations for '{query}', found {len(parsed_results)} results.")
+            return parsed_results
         elif self.db_type == "neo4j":
-            logger.info("Searching conversations in Neo4j (placeholder).")
+            logger.info(f"Mock: Searching Neo4j conversations for '{query}'")
             return []
         return []
 
-    async def add_knowledge_article(self, title: str, content: str, source: str, tags: List[str] = None):
-        """Adds a knowledge article to memory."""
+    async def add_knowledge(self, content: str, metadata: Dict[str, Any]):
+        """
+        Adds a piece of general knowledge to memory.
+        """
         if self.db_type == "chromadb":
-            doc_id = f"kb_{datetime.now().timestamp()}"
-            full_metadata = {
-                "timestamp": datetime.now().isoformat(),
-                "title": title,
-                "source": source,
-                "tags": tags if tags is not None else []
-            }
+            doc_id = f"kb_{int(time.time() * 1000)}_{len(self.knowledge_collection.peek()['ids'])}"
+            safe_metadata = {k: v for k, v in metadata.items() if isinstance(v, (str, int, float, bool, type(None)))}
+            safe_metadata["timestamp"] = time.time()
             self.knowledge_collection.add(
                 documents=[content],
-                metadatas=[full_metadata],
+                metadatas=[safe_metadata],
                 ids=[doc_id]
             )
-            logger.debug(f"Knowledge article added: {title}")
+            logger.debug(f"Added general knowledge to ChromaDB: {doc_id}")
         elif self.db_type == "neo4j":
-            logger.info("Adding knowledge article to Neo4j (placeholder).")
+            logger.info(f"Mock: Added general knowledge to Neo4j: {content[:50]}...")
 
-    async def search_knowledge(self, query: str, limit: int = 5, tags: List[str] = None) -> List[Dict[str, Any]]:
-        """Searches general knowledge base."""
+    async def add_knowledge_article(self, title: str, content: str, source: str, tags: List[str] = None):
+        """
+        Adds a knowledge article with structured metadata.
+        """
+        metadata = {
+            "title": title,
+            "source": source,
+            "tags": tags or [],
+            "timestamp": time.time()
+        }
+        await self.add_knowledge(content, metadata)
+        logger.debug(f"Added knowledge article: {title}")
+
+    async def search_knowledge(self, query: str, limit: int = 3) -> List[Dict[str, Any]]:
+        """
+        Searches general knowledge base for relevant information.
+        """
         if self.db_type == "chromadb":
-            where_clause = {"tags": {"$contains": tag} for tag in tags} if tags else {}
             results = self.knowledge_collection.query(
                 query_texts=[query],
                 n_results=limit,
-                where=where_clause,
-                include=["documents", "metadatas", "distances"]
+                include=['documents', 'metadatas', 'distances']
             )
-            formatted_results = []
-            if results and results["documents"]:
-                for i in range(len(results["documents"][0])):
-                    formatted_results.append({
-                        "content": results["documents"][0][i],
-                        "metadata": results["metadatas"][0][i],
-                        "distance": results["distances"][0][i]
+            parsed_results = []
+            if results and results['documents']:
+                for i in range(len(results['documents'][0])):
+                    parsed_results.append({
+                        "content": results['documents'][0][i],
+                        "metadata": results['metadatas'][0][i],
+                        "distance": results['distances'][0][i]
                     })
-            logger.debug(f"Searched knowledge for '{query}', found {len(formatted_results)} results.")
-            return formatted_results
+            logger.debug(f"Searched general knowledge for '{query}', found {len(parsed_results)} results.")
+            return parsed_results
         elif self.db_type == "neo4j":
-            logger.info("Searching knowledge in Neo4j (placeholder).")
+            logger.info(f"Mock: Searching Neo4j general knowledge for '{query}'")
             return []
         return []
 
-    async def add_security_knowledge(self, title: str, content: str, source: str, vulnerability_type: str = "general"):
-        """Adds security-specific knowledge to memory."""
+    async def add_security_knowledge(self, content: str, metadata: Dict[str, Any]):
+        """
+        Adds a piece of security-specific knowledge to memory.
+        """
         if self.db_type == "chromadb":
-            doc_id = f"sec_{datetime.now().timestamp()}"
-            full_metadata = {
-                "timestamp": datetime.now().isoformat(),
-                "title": title,
-                "source": source,
-                "vulnerability_type": vulnerability_type
-            }
+            doc_id = f"sec_kb_{int(time.time() * 1000)}_{len(self.security_knowledge_collection.peek()['ids'])}"
+            safe_metadata = {k: v for k, v in metadata.items() if isinstance(v, (str, int, float, bool, type(None)))}
+            safe_metadata["timestamp"] = time.time()
             self.security_knowledge_collection.add(
                 documents=[content],
-                metadatas=[full_metadata],
+                metadatas=[safe_metadata],
                 ids=[doc_id]
             )
-            logger.debug(f"Security knowledge added: {title}")
+            logger.debug(f"Added security knowledge to ChromaDB: {doc_id}")
         elif self.db_type == "neo4j":
-            logger.info("Adding security knowledge to Neo4j (placeholder).")
+            logger.info(f"Mock: Added security knowledge to Neo4j: {content[:50]}...")
 
-    async def search_security_knowledge(self, query: str, limit: int = 5, vulnerability_type: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Searches security-specific knowledge base."""
+    async def search_security_knowledge(self, query: str, limit: int = 3) -> List[Dict[str, Any]]:
+        """
+        Searches security-specific knowledge base for relevant information.
+        """
         if self.db_type == "chromadb":
-            where_clause = {"vulnerability_type": vulnerability_type} if vulnerability_type else {}
             results = self.security_knowledge_collection.query(
                 query_texts=[query],
                 n_results=limit,
-                where=where_clause,
-                include=["documents", "metadatas", "distances"]
+                include=['documents', 'metadatas', 'distances']
             )
-            formatted_results = []
-            if results and results["documents"]:
-                for i in range(len(results["documents"][0])):
-                    formatted_results.append({
-                        "content": results["documents"][0][i],
-                        "metadata": results["metadatas"][0][i],
-                        "distance": results["distances"][0][i]
+            parsed_results = []
+            if results and results['documents']:
+                for i in range(len(results['documents'][0])):
+                    parsed_results.append({
+                        "content": results['documents'][0][i],
+                        "metadata": results['metadatas'][0][i],
+                        "distance": results['distances'][0][i]
                     })
-            logger.debug(f"Searched security knowledge for '{query}', found {len(formatted_results)} results.")
-            return formatted_results
+            logger.debug(f"Searched security knowledge for '{query}', found {len(parsed_results)} results.")
+            return parsed_results
         elif self.db_type == "neo4j":
-            logger.info("Searching security knowledge in Neo4j (placeholder).")
+            logger.info(f"Mock: Searching Neo4j security knowledge for '{query}'")
             return []
         return []
 
-    def persist_memory(self):
-        """Persists the ChromaDB client to disk."""
+    async def add_ethical_violation(self, violation_data: Dict[str, Any]):
+        """
+        Adds a record of an ethical violation to a dedicated collection.
+        """
         if self.db_type == "chromadb":
-            self.client.persist()
-            logger.info(f"ChromaDB persisted to {self.chroma_path}")
-        else:
-            logger.info("Persistence not applicable or implemented for selected DB type.")
+            content = f"Ethical Violation: {violation_data.get('violations', [])[0].get('description', 'N/A')}"
+            doc_id = f"ethical_violation_{int(time.time() * 1000)}_{len(self.ethical_violations_collection.peek()['ids'])}"
+            
+            # Ensure metadata is JSON serializable
+            safe_metadata = {k: v for k, v in violation_data.items() if isinstance(v, (str, int, float, bool, type(None)))}
+            safe_metadata["timestamp"] = time.time()
+            
+            self.ethical_violations_collection.add(
+                documents=[content],
+                metadatas=[safe_metadata],
+                ids=[doc_id]
+            )
+            logger.debug(f"Added ethical violation to ChromaDB: {doc_id}")
+        elif self.db_type == "neo4j":
+            logger.info(f"Mock: Added ethical violation to Neo4j: {violation_data.get('violations', [])}")
 
     def clear_memory(self):
-        """Clears all data from ChromaDB collections."""
+        """
+        Clears all data from all ChromaDB collections.
+        This action is irreversible.
+        """
         if self.db_type == "chromadb":
+            logger.warning("Clearing all ChromaDB collections. This action is irreversible.")
             try:
-                self.client.delete_collection(name="jarvis_conversations")
-                self.client.delete_collection(name="jarvis_knowledge")
-                self.client.delete_collection(name="jarvis_security_knowledge")
-                logger.info("All ChromaDB collections cleared.")
+                self.client.delete_collection(name="conversations")
+                self.client.delete_collection(name="general_knowledge")
+                self.client.delete_collection(name="security_knowledge")
+                self.client.delete_collection(name="ethical_violations")
+                
+                # Re-create empty collections
+                self.conversations_collection = self.client.get_or_create_collection(
+                    name="conversations", embedding_function=self.embedding_function
+                )
+                self.knowledge_collection = self.client.get_or_create_collection(
+                    name="general_knowledge", embedding_function=self.embedding_function
+                )
+                self.security_knowledge_collection = self.client.get_or_create_collection(
+                    name="security_knowledge", embedding_function=self.embedding_function
+                )
+                self.ethical_violations_collection = self.client.get_or_create_collection(
+                    name="ethical_violations", embedding_function=self.embedding_function
+                )
+                logger.info("All ChromaDB collections cleared and re-initialized.")
             except Exception as e:
                 logger.error(f"Error clearing ChromaDB collections: {e}")
-        else:
-            logger.info("Clear memory not applicable or implemented for selected DB type.")
+        elif self.db_type == "neo4j":
+            logger.warning("Mock: Clearing all Neo4j memory.")
+            # Placeholder for Neo4j clear operation

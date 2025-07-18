@@ -2,9 +2,10 @@ import asyncio
 import speech_recognition as sr
 from gtts import gTTS
 import os
-import sys # Added for platform check
+import sys
 from typing import Dict, Any
 from utils.logger import logger
+from playsound import playsound # Import playsound
 
 class VoiceInterface:
     """
@@ -71,27 +72,36 @@ class VoiceInterface:
 
     async def speak(self, text: str):
         """
-        Converts text to speech and plays it.
+        Converts text to speech and plays it using playsound.
         """
         if not self.enabled:
             logger.info(f"Voice output disabled. Would have said: '{text}'")
             return
 
         logger.info(f"Speaking: '{text}'")
+        audio_file = "jarvis_response.mp3"
         try:
             tts = gTTS(text=text, lang=self.tts_voice.split('-')[0], slow=False)
-            audio_file = "jarvis_response.mp3"
             tts.save(audio_file)
             
-            # Play the audio file (platform-dependent)
-            if sys.platform == "darwin": # macOS
-                os.system(f"afplay {audio_file}")
-            elif sys.platform == "win32": # Windows
-                os.system(f"start {audio_file}")
-            else: # Linux
-                os.system(f"mpg123 {audio_file}") # Requires mpg123 to be installed
-
-            os.remove(audio_file) # Clean up
+            # Use playsound for cross-platform audio playback
+            playsound(audio_file)
+            
             logger.debug("Speech playback complete.")
         except Exception as e:
-            logger.error(f"Error during text-to-speech: {e}")
+            logger.error(f"Error during text-to-speech or playback: {e}")
+            logger.warning("Attempting fallback to platform-specific audio playback...")
+            # Fallback to os.system if playsound fails or is not installed/configured
+            try:
+                if sys.platform == "darwin": # macOS
+                    os.system(f"afplay {audio_file}")
+                elif sys.platform == "win32": # Windows
+                    os.system(f"start {audio_file}")
+                else: # Linux
+                    os.system(f"mpg123 {audio_file}") # Requires mpg123 to be installed
+                logger.debug("Fallback speech playback complete.")
+            except Exception as fallback_e:
+                logger.error(f"Fallback audio playback also failed: {fallback_e}")
+        finally:
+            if os.path.exists(audio_file):
+                os.remove(audio_file) # Clean up

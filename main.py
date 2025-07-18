@@ -15,6 +15,7 @@ from core.self_learning import SelfLearningEngine
 from core.collaboration_hub import CollaborationHub
 from core.deployment_manager import DeploymentManager
 from core.voice_interface import VoiceInterface
+from core.knowledge_integrator import KnowledgeIntegrator # Import KnowledgeIntegrator
 
 class JarvisAI:
     """
@@ -35,14 +36,6 @@ class JarvisAI:
             self.nlp_engine, self.memory_manager, self.api_integrations, 
             self.vision_engine, self.ethical_ai_engine, self.config.get("reasoning", {})
         )
-        self.human_ai_teaming = HumanAITeaming(
-            self.nlp_engine, self.memory_manager, 
-            CollaborationHub(self.config.get("collaboration", {})), # Pass CollaborationHub instance
-            self.config.get("human_ai_teaming", {})
-        )
-        self.self_correction_engine = SelfCorrectionEngine(
-            self.nlp_engine, self.memory_manager, self.ethical_ai_engine, self.config.get("self_correction", {})
-        )
         self.knowledge_integrator = KnowledgeIntegrator(
             self.config.get("learning", {}), self.memory_manager, self.api_integrations # Pass APIIntegrations
         )
@@ -50,6 +43,14 @@ class JarvisAI:
             self.memory_manager, self.knowledge_integrator, self.config.get("learning", {})
         )
         self.collaboration_hub = CollaborationHub(self.config.get("collaboration", {}))
+        self.human_ai_teaming = HumanAITeaming(
+            self.nlp_engine, self.memory_manager, 
+            self.collaboration_hub, # Pass CollaborationHub instance
+            self.config.get("human_ai_teaming", {})
+        )
+        self.self_correction_engine = SelfCorrectionEngine(
+            self.nlp_engine, self.memory_manager, self.ethical_ai_engine, self.config.get("self_correction", {})
+        )
         self.deployment_manager = DeploymentManager(self.config.get("deployment", {}))
         self.voice_interface = VoiceInterface(self.config.get("voice", {}))
 
@@ -118,6 +119,7 @@ class JarvisAI:
         context["nlp_confidence"] = nlp_result["metadata"]["confidence"]
         context["nlp_entities"] = nlp_result["metadata"]["entities"]
         context["nlp_summary"] = nlp_result["metadata"]["summary"]
+        context["user_sentiment"] = nlp_result["metadata"]["sentiment"] # Add user sentiment to context
         logger.debug(f"NLP Result: {nlp_result}")
 
         # 2. Memory Recall (retrieve relevant past conversations and knowledge)
@@ -198,10 +200,10 @@ class JarvisAI:
 
     async def run_chat_interface(self):
         """Runs the Gradio chat interface."""
-        from interface.chat_interface import create_chat_interface
-        chat_ui = create_chat_interface(self)
+        from interface.chat_interface import ChatInterface
+        chat_ui = ChatInterface(self)
         logger.info("Starting chat interface...")
-        await chat_ui.launch(share=False, inbrowser=True)
+        await chat_ui.create_interface().launch(share=False, inbrowser=True)
 
     async def run_admin_dashboard(self):
         """Runs the Gradio admin dashboard."""
@@ -224,17 +226,17 @@ class JarvisAI:
 
     async def run_video_analysis_ui(self):
         """Runs the Gradio video analysis UI."""
-        from interface.vision.video_ui import create_video_analysis_ui
-        video_ui = create_video_analysis_ui(self.vision_engine)
+        from interface.vision.video_ui import VideoUI
+        video_ui = VideoUI(self.vision_engine) # Pass instance of VisionEngine
         logger.info("Starting video analysis UI...")
-        await video_ui.launch(share=False, inbrowser=True)
+        await video_ui.create_interface().launch(share=False, inbrowser=True)
 
 async def main():
     import argparse
     parser = argparse.ArgumentParser(description="Run JARVIS AI in different modes.")
     parser.add_argument("--mode", type=str, default="chat", 
-                        choices=["chat", "admin", "feedback", "video_analysis"],
-                        help="Mode to run JARVIS AI in (chat, admin, feedback, video_analysis).")
+                        choices=["chat", "admin", "feedback", "video_analysis", "vision", "learning"],
+                        help="Mode to run JARVIS AI in.")
     args = parser.parse_args()
 
     async with JarvisAI() as jarvis:
@@ -242,10 +244,7 @@ async def main():
             await jarvis.run_chat_interface()
         elif args.mode == "admin":
             await jarvis.run_admin_dashboard()
-        elif args.mode == "feedback":
+        elif args.mode == "feedback" or args.mode == "learning":
             await jarvis.run_feedback_ui()
-        elif args.mode == "video_analysis":
+        elif args.mode == "video_analysis" or args.mode == "vision":
             await jarvis.run_video_analysis_ui()
-
-if __name__ == "__main__":
-    asyncio.run(main())

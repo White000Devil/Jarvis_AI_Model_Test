@@ -1,229 +1,312 @@
 import asyncio
-import httpx
-from typing import Dict, Any, Optional
-from datetime import datetime
+import aiohttp
+import json
+from typing import Dict, Any, List, Optional
 from utils.logger import logger
-import os
+import time
 
 class APIIntegrations:
     """
-    Manages integrations with external APIs for various functionalities
-    like security tools, external knowledge bases, or operational systems.
+    Manages external API integrations for JARVIS AI.
+    Handles OpenAI, Hugging Face, News APIs, and other external services.
     """
+    
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        # Using os.getenv for environment variables, falling back to config or default placeholders
-        self.security_api_key = os.getenv("SECURITY_API_KEY", config.get("security_api_key", "YOUR_SECURITY_API_KEY"))
-        self.weather_api_key = os.getenv("WEATHER_API_KEY", config.get("weather_api_key", "YOUR_WEATHER_API_KEY"))
-        self.openai_api_key = os.getenv("OPENAI_API_KEY", config.get("openai_api_key", "your_openai_api_key_here"))
-        self.huggingface_api_key = os.getenv("HUGGINGFACE_API_KEY", config.get("huggingface_api_key", "your_huggingface_api_key_here"))
-        # Add new API keys for real-time feeds if needed
-        self.news_api_key = os.getenv("NEWS_API_KEY", config.get("news_api_key", "YOUR_NEWS_API_KEY"))
-        self.threat_intel_api_key = os.getenv("THREAT_INTEL_API_KEY", config.get("threat_intel_api_key", "YOUR_THREAT_INTEL_API_KEY"))
-
-        self.client = httpx.AsyncClient() # Asynchronous HTTP client
-        self.api_stats: Dict[str, Any] = {
-            "total_requests": 0,
-            "successful_requests": 0,
-            "failed_requests": 0,
-            "last_request_timestamp": None
-        }
-        logger.info("API Integrations initialized.")
-
+        self.openai_config = config.get("openai", {})
+        self.huggingface_config = config.get("huggingface", {})
+        self.news_api_config = config.get("news_api", {})
+        
+        self.session: Optional[aiohttp.ClientSession] = None
+        self.rate_limits = {}
+        
+        logger.info("API Integrations initialized")
+    
     async def __aenter__(self):
-        """Context manager entry point."""
+        """Initialize HTTP session."""
+        self.session = aiohttp.ClientSession()
+        logger.info("API Integrations session started")
         return self
-
+    
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit point."""
-        await self.client.aclose()
-
-    async def _make_request(self, method: str, url: str, headers: Dict = None, json_data: Dict = None, params: Dict = None) -> Optional[Dict[str, Any]]:
-        """Helper method to make an asynchronous HTTP request."""
-        self.api_stats["total_requests"] += 1
-        self.api_stats["last_request_timestamp"] = datetime.now().isoformat()
+        """Close HTTP session."""
+        if self.session:
+            await self.session.close()
+        logger.info("API Integrations session closed")
+    
+    async def _make_request(self, url: str, method: str = "GET", headers: Dict[str, str] = None, 
+                          data: Dict[str, Any] = None, timeout: int = 30) -> Dict[str, Any]:
+        """Make an HTTP request with error handling and rate limiting."""
+        if not self.session:
+            raise RuntimeError("Session not initialized. Use async context manager.")
+        
+        if headers is None:
+            headers = {}
         
         try:
-            response = await self.client.request(method, url, headers=headers, json=json_data, params=params, timeout=30.0)
-            response.raise_for_status() # Raise an exception for 4xx or 5xx status codes
-            self.api_stats["successful_requests"] += 1
-            logger.debug(f"API request to {url} successful.")
-            return response.json()
-        except httpx.RequestError as e:
-            self.api_stats["failed_requests"] += 1
-            logger.error(f"API request to {url} failed: {e}")
-            return {"error": str(e), "status": "request_failed"}
-        except httpx.HTTPStatusError as e:
-            self.api_stats["failed_requests"] += 1
-            logger.error(f"API request to {url} returned HTTP error {e.response.status_code}: {e.response.text}")
-            return {"error": e.response.text, "status": "http_error", "status_code": e.response.status_code}
+            async with self.session.request(
+                method, url, headers=headers, json=data, timeout=timeout
+            ) as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    logger.error(f"API request failed: {response.status} - {await response.text()}")
+                    return {"error": f"HTTP {response.status}", "status": "error"}
+        
+        except asyncio.TimeoutError:
+            logger.error(f"Request timeout for {url}")
+            return {"error": "Request timeout", "status": "error"}
         except Exception as e:
-            self.api_stats["failed_requests"] += 1
-            logger.error(f"An unexpected error occurred during API request to {url}: {e}")
-            return {"error": str(e), "status": "unexpected_error"}
-
-    async def security_analysis(self, target: str, analysis_type: str = "vulnerability_scan") -> Dict[str, Any]:
-        """
-        Simulates calling an external security analysis API.
-        In a real scenario, this would integrate with tools like Nessus, Qualys, etc.
-        """
-        logger.info(f"Initiating security analysis ({analysis_type}) for target: {target}")
-        
-        # Example: Mock API call to a vulnerability scanner
-        mock_api_url = "https://mock-security-scanner.com/api/v1/scan"
-        headers = {"Authorization": f"Bearer {self.security_api_key}"} # Use actual key
-        payload = {"target": target, "type": analysis_type}
-        
-        # Simulate a real API call
-        response = await self._make_request("POST", mock_api_url, headers=headers, json_data=payload)
-        
-        if response and response.get("status") == "success":
-            logger.info(f"Security analysis for {target} completed successfully (mock).")
-            return {"status": "completed", "results": {"vulnerabilities_found": 2, "severity": "medium"}}
-        else:
-            logger.warning(f"Security analysis for {target} failed (mock). Reason: {response.get('error', 'Unknown')}")
-            return {"status": "failed", "reason": response.get("error", "Mock analysis failed.")}
-
-    async def get_weather(self, city: str, country_code: str = "us") -> Dict[str, Any]:
-        """
-        Fetches simulated weather data for a given city.
-        """
-        logger.info(f"Fetching simulated weather for {city}, {country_code}")
-        self.api_stats["total_requests"] += 1
-
-        if self.weather_api_key == "YOUR_WEATHER_API_KEY":
-            logger.warning("Weather API key not configured. Returning mock weather data.")
-            self.api_stats["failed_requests"] += 1
+            logger.error(f"Request failed for {url}: {e}")
+            return {"error": str(e), "status": "error"}
+    
+    async def query_openai(self, prompt: str, model: str = None, max_tokens: int = None) -> Dict[str, Any]:
+        """Query OpenAI API."""
+        api_key = self.openai_config.get("api_key")
+        if not api_key or api_key == "your-openai-api-key-here":
+            logger.warning("OpenAI API key not configured")
             return {
-                "status": "mocked_failure",
-                "city": city,
-                "temperature": "N/A",
-                "conditions": "API key not set. Mock data only.",
-                "timestamp": datetime.now().isoformat()
+                "status": "error",
+                "message": "OpenAI API key not configured",
+                "response": "I'm currently running in demo mode. Please configure your OpenAI API key to enable full functionality."
             }
-
-        try:
-            # Simulate API call
-            await asyncio.sleep(1) # Simulate network latency
-
-            # Mock weather data
-            mock_temperatures = {
-                "london": {"temp": 15, "conditions": "Cloudy"},
-                "new york": {"temp": 25, "conditions": "Sunny"},
-                "tokyo": {"temp": 20, "conditions": "Rainy"},
-            }
-            city_lower = city.lower()
-            weather_data = mock_temperatures.get(city_lower, {"temp": 22, "conditions": "Partly Cloudy"})
-
-            self.api_stats["successful_requests"] += 1
-            logger.info(f"Simulated weather for {city} fetched successfully.")
+        
+        model = model or self.openai_config.get("model", "gpt-3.5-turbo")
+        max_tokens = max_tokens or self.openai_config.get("max_tokens", 1000)
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        data = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+            "temperature": 0.7
+        }
+        
+        result = await self._make_request(
+            "https://api.openai.com/v1/chat/completions",
+            method="POST",
+            headers=headers,
+            data=data
+        )
+        
+        if "error" not in result and "choices" in result:
             return {
-                "status": "completed",
-                "city": city,
-                "temperature_celsius": weather_data["temp"],
-                "conditions": weather_data["conditions"],
-                "timestamp": datetime.now().isoformat()
+                "status": "success",
+                "response": result["choices"][0]["message"]["content"],
+                "usage": result.get("usage", {})
             }
-        except Exception as e:
-            self.api_stats["failed_requests"] += 1
-            logger.error(f"Error fetching simulated weather for {city}: {e}")
-            return {"status": "failed", "city": city, "error": str(e), "timestamp": datetime.now().isoformat()}
-
-    async def get_external_knowledge(self, query: str, source: str = "wikipedia") -> Optional[str]:
-        """
-        Simulates fetching knowledge from an external source like Wikipedia or a specialized database.
-        """
-        logger.info(f"Fetching external knowledge for '{query}' from {source} (mock).")
         
-        # Example: Mock API call to a knowledge base
-        mock_api_url = f"https://mock-knowledge-base.com/api/search?q={query}&source={source}"
-        response = await self._make_request("GET", mock_api_url)
+        return {
+            "status": "error",
+            "message": result.get("error", "Unknown error"),
+            "response": "I encountered an error while processing your request."
+        }
+    
+    async def query_huggingface(self, text: str, model: str = None) -> Dict[str, Any]:
+        """Query Hugging Face API."""
+        api_key = self.huggingface_config.get("api_key")
+        if not api_key or api_key == "your-huggingface-api-key-here":
+            logger.warning("Hugging Face API key not configured")
+            return {
+                "status": "error",
+                "message": "Hugging Face API key not configured",
+                "response": "Hugging Face integration is not available in demo mode."
+            }
         
-        if response and response.get("status") == "success" and response.get("data"):
-            logger.info(f"External knowledge for '{query}' retrieved successfully (mock).")
-            return response["data"]["content"]
-        else:
-            logger.warning(f"Failed to retrieve external knowledge for '{query}' from {source} (mock).")
-            return None
-
-    async def send_notification(self, recipient: str, message: str, channel: str = "email") -> bool:
-        """
-        Simulates sending a notification via an external service (e.g., email, Slack).
-        """
-        logger.info(f"Sending notification to {recipient} via {channel}: '{message}' (mock).")
+        model = model or self.huggingface_config.get("model", "microsoft/DialoGPT-medium")
         
-        # Example: Mock API call to a notification service
-        mock_api_url = "https://mock-notification-service.com/api/send"
-        payload = {"recipient": recipient, "message": message, "channel": channel}
-        response = await self._make_request("POST", mock_api_url, json_data=payload)
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
         
-        if response and response.get("status") == "sent":
-            logger.info(f"Notification sent successfully to {recipient} (mock).")
-            return True
-        else:
-            logger.warning(f"Failed to send notification to {recipient} (mock).")
-            return False
+        data = {"inputs": text}
+        
+        result = await self._make_request(
+            f"https://api-inference.huggingface.co/models/{model}",
+            method="POST",
+            headers=headers,
+            data=data
+        )
+        
+        if "error" not in result and isinstance(result, list) and len(result) > 0:
+            return {
+                "status": "success",
+                "response": result[0].get("generated_text", ""),
+                "model": model
+            }
+        
+        return {
+            "status": "error",
+            "message": result.get("error", "Unknown error"),
+            "response": "I encountered an error while processing your request."
+        }
+    
+    async def fetch_realtime_news(self, query: str, sources: List[str] = None) -> Dict[str, Any]:
+        """Fetch real-time news articles."""
+        api_key = self.news_api_config.get("api_key")
+        if not api_key or api_key == "your-news-api-key-here":
+            logger.warning("News API key not configured - using mock data")
+            return self._generate_mock_news(query)
+        
+        sources = sources or self.news_api_config.get("sources", [])
+        
+        params = {
+            "q": query,
+            "apiKey": api_key,
+            "sortBy": "publishedAt",
+            "pageSize": 10
+        }
+        
+        if sources:
+            params["sources"] = ",".join(sources)
+        
+        url = "https://newsapi.org/v2/everything"
+        result = await self._make_request(url, method="GET")
+        
+        if "error" not in result and "articles" in result:
+            return {
+                "status": "success",
+                "articles": result["articles"],
+                "total_results": result.get("totalResults", 0)
+            }
+        
+        return {
+            "status": "error",
+            "message": result.get("error", "Unknown error"),
+            "articles": []
+        }
+    
+    async def fetch_threat_intelligence(self, query: str) -> Dict[str, Any]:
+        """Fetch threat intelligence data (mock implementation)."""
+        logger.info(f"Fetching threat intelligence for: {query}")
+        
+        # Mock threat intelligence data
+        mock_threats = [
+            {
+                "title": f"Security Alert: {query}",
+                "description": f"Potential security threat related to {query} detected in recent analysis.",
+                "severity": "medium",
+                "type": "vulnerability",
+                "source": "Mock Threat Intelligence",
+                "timestamp": time.time()
+            },
+            {
+                "title": f"CVE Update: {query}",
+                "description": f"New vulnerability disclosure affecting {query} systems.",
+                "severity": "high",
+                "type": "cve",
+                "source": "Mock CVE Database",
+                "timestamp": time.time()
+            }
+        ]
+        
+        return {
+            "status": "success",
+            "threats": mock_threats,
+            "query": query
+        }
+    
+    def _generate_mock_news(self, query: str) -> Dict[str, Any]:
+        """Generate mock news data for testing."""
+        mock_articles = [
+            {
+                "title": f"Breaking: Latest developments in {query}",
+                "description": f"Recent news about {query} and its implications for the industry.",
+                "url": f"https://example.com/news/{query.replace(' ', '-')}",
+                "source": {"name": "Mock News Source"},
+                "publishedAt": "2024-01-15T10:00:00Z"
+            },
+            {
+                "title": f"Analysis: {query} trends and predictions",
+                "description": f"Expert analysis on {query} and future outlook.",
+                "url": f"https://example.com/analysis/{query.replace(' ', '-')}",
+                "source": {"name": "Mock Tech News"},
+                "publishedAt": "2024-01-15T09:30:00Z"
+            }
+        ]
+        
+        return {
+            "status": "success",
+            "articles": mock_articles,
+            "total_results": len(mock_articles)
+        }
+    
+    async def test_connections(self) -> Dict[str, Any]:
+        """Test all API connections."""
+        results = {}
+        
+        # Test OpenAI
+        openai_result = await self.query_openai("Hello, this is a test.")
+        results["openai"] = {
+            "status": openai_result["status"],
+            "available": openai_result["status"] == "success"
+        }
+        
+        # Test Hugging Face
+        hf_result = await self.query_huggingface("Hello, this is a test.")
+        results["huggingface"] = {
+            "status": hf_result["status"],
+            "available": hf_result["status"] == "success"
+        }
+        
+        # Test News API
+        news_result = await self.fetch_realtime_news("technology")
+        results["news_api"] = {
+            "status": news_result["status"],
+            "available": news_result["status"] == "success"
+        }
+        
+        logger.info(f"API connection test results: {results}")
+        return results
 
-    async def fetch_realtime_news(self, query: str, limit: int = 5) -> Optional[Dict[str, Any]]:
-        """
-        Simulates fetching real-time news articles based on a query.
-        In a real scenario, this would call a news API (e.g., NewsAPI, GNews API).
-        """
-        logger.info(f"Fetching simulated real-time news for query: '{query}'")
-        self.api_stats["total_requests"] += 1
+# Test function for API Integrations
+async def test_api_integrations():
+    """Test the API Integrations functionality."""
+    logger.info("--- Testing API Integrations ---")
+    
+    config = {
+        "openai": {
+            "api_key": "your-openai-api-key-here",
+            "model": "gpt-3.5-turbo",
+            "max_tokens": 1000
+        },
+        "huggingface": {
+            "api_key": "your-huggingface-api-key-here",
+            "model": "microsoft/DialoGPT-medium"
+        },
+        "news_api": {
+            "api_key": "your-news-api-key-here",
+            "sources": ["techcrunch", "wired"]
+        }
+    }
+    
+    async with APIIntegrations(config) as api:
+        # Test connections
+        results = await api.test_connections()
+        
+        # Test individual APIs
+        logger.info("Testing OpenAI...")
+        openai_result = await api.query_openai("What is artificial intelligence?")
+        logger.info(f"OpenAI Response: {openai_result['response'][:100]}...")
+        
+        logger.info("Testing News API...")
+        news_result = await api.fetch_realtime_news("artificial intelligence")
+        logger.info(f"Found {len(news_result['articles'])} news articles")
+        
+        logger.info("Testing Threat Intelligence...")
+        threat_result = await api.fetch_threat_intelligence("malware")
+        logger.info(f"Found {len(threat_result['threats'])} threat intelligence items")
+    
+    logger.info("API Integrations tests completed successfully!")
 
-        if self.news_api_key == "YOUR_NEWS_API_KEY":
-            logger.warning("News API key not configured. Returning mock news data.")
-            self.api_stats["failed_requests"] += 1
-            return {"status": "mocked_failure", "articles": []}
-
-        try:
-            await asyncio.sleep(1.5) # Simulate network latency
-
-            mock_articles = [
-                {"title": f"New Cyber Attack Alert: {query} Impact", "description": "Details on a recent cyber attack affecting critical infrastructure.", "content": "Attack vectors include phishing and ransomware. Users advised to update systems.", "source": "CyberNews Daily"},
-                {"title": f"AI in Cybersecurity: Latest Trends for {query}", "description": "How AI is being used to detect and prevent cyber threats.", "content": "Machine learning models are improving anomaly detection and threat prediction.", "source": "AI Security Journal"},
-                {"title": f"Data Breach at TechCo: {query} Exposed", "description": "Millions of user records potentially compromised in a recent data breach.", "content": "Investigation ongoing, affected users advised to change passwords.", "source": "Tech Security News"}
-            ]
-            
-            self.api_stats["successful_requests"] += 1
-            logger.info(f"Simulated real-time news fetched for '{query}'.")
-            return {"status": "success", "articles": mock_articles[:limit]}
-        except Exception as e:
-            self.api_stats["failed_requests"] += 1
-            logger.error(f"Error fetching simulated real-time news for '{query}': {e}")
-            return {"status": "failed", "error": str(e)}
-
-    async def fetch_threat_intelligence(self, query: str, limit: int = 3) -> Optional[Dict[str, Any]]:
-        """
-        Simulates fetching threat intelligence data.
-        In a real scenario, this would call a threat intelligence platform (e.g., AlienVault OTX, Recorded Future).
-        """
-        logger.info(f"Fetching simulated threat intelligence for query: '{query}'")
-        self.api_stats["total_requests"] += 1
-
-        if self.threat_intel_api_key == "YOUR_THREAT_INTEL_API_KEY":
-            logger.warning("Threat Intelligence API key not configured. Returning mock threat data.")
-            self.api_stats["failed_requests"] += 1
-            return {"status": "mocked_failure", "threats": []}
-
-        try:
-            await asyncio.sleep(1.0) # Simulate network latency
-
-            mock_threats = [
-                {"title": f"APT Group X Targets {query} Sector", "description": "Advanced Persistent Threat group targeting specific industries with custom malware.", "type": "APT", "source": "ThreatIntel Daily"},
-                {"title": f"New Ransomware Variant: {query} Locker", "description": "Analysis of a new ransomware strain with enhanced evasion techniques.", "type": "Ransomware", "source": "Malware Analysis Blog"},
-                {"title": f"Zero-Day Exploit Found in {query} Software", "description": "Critical vulnerability discovered in widely used software, no patch available yet.", "type": "Zero-Day", "source": "Security Research"}
-            ]
-            
-            self.api_stats["successful_requests"] += 1
-            logger.info(f"Simulated threat intelligence fetched for '{query}'.")
-            return {"status": "success", "threats": mock_threats[:limit]}
-        except Exception as e:
-            self.api_stats["failed_requests"] += 1
-            logger.error(f"Error fetching simulated threat intelligence for '{query}': {e}")
-            return {"status": "failed", "error": str(e)}
-
-    def get_api_stats(self) -> Dict[str, Any]:
-        """Returns statistics about API call usage."""
-        return self.api_stats
+if __name__ == "__main__":
+    import asyncio
+    from utils.logger import setup_logging
+    
+    setup_logging(debug=True)
+    asyncio.run(test_api_integrations())

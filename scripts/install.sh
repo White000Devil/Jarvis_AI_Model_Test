@@ -43,12 +43,21 @@ echo "Upgrading pip..."
 pip install --upgrade pip
 
 # Install dependencies from requirements.txt
-echo "Installing dependencies from requirements.txt..."
-pip install -r requirements.txt
-if [ $? -ne 0 ]; then
-    echo "Failed to install dependencies from requirements.txt. Please check the file and your internet connection."
+if [ -f "requirements.txt" ]; then
+    echo "Installing dependencies from requirements.txt..."
+    pip install -r requirements.txt
+    if [ $? -ne 0 ]; then
+        echo "Failed to install dependencies from requirements.txt. Please check the file and your internet connection."
+        exit 1
+    fi
+else
+    echo "requirements.txt not found. Please ensure it exists in the project root."
     exit 1
 fi
+
+# Set up directories
+echo "Setting up directories..."
+python3 scripts/setup_directories.py
 
 # Install specific packages that might have issues or are optional
 echo "Installing optional/platform-specific dependencies..."
@@ -61,4 +70,5 @@ echo "Installing optional/platform-specific dependencies..."
 
 echo "Dependency installation complete. Virtual environment activated."
 echo "You can now run JARVIS AI using 'python3 main.py --mode <mode>'."
-echo "Remember to configure your API keys in config.yaml or as environment variables."
+echo "Available modes: chat, admin, feedback, video_analysis"
+echo "Remember to configure your API keys in config.yaml."

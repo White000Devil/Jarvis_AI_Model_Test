@@ -1,82 +1,72 @@
-import logging
-from loguru import logger
 import sys
-from pathlib import Path
+import os
+from loguru import logger
+from typing import Optional
 
 # Remove default logger to use Loguru's features
-logger.remove()
+# This section will be replaced with the new logging setup
 
-def setup_logging(debug: bool = False, log_level: str = "INFO"):
+def setup_logging(debug: bool = False, log_level: str = "INFO", log_file: Optional[str] = None):
     """
-    Sets up the logging configuration for the JARVIS AI Assistant.
-
+    Sets up logging configuration for JARVIS AI.
+    
     Args:
-        debug (bool): If True, sets log level to DEBUG and includes file/line info.
-        log_level (str): Minimum log level to capture (e.g., "INFO", "DEBUG", "WARNING", "ERROR").
+        debug: Enable debug mode with more verbose logging
+        log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        log_file: Optional log file path
     """
-    log_path = Path("logs")
-    log_path.mkdir(parents=True, exist_ok=True)
-
-    # Configure Loguru
-    # Console logger
+    # Remove default logger
+    logger.remove()
+    
+    # Create logs directory if it doesn't exist
+    os.makedirs("logs", exist_ok=True)
+    
+    # Console logging format
+    console_format = (
+        "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+        "<level>{level: <8}</level> | "
+        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
+        "<level>{message}</level>"
+    )
+    
+    # File logging format
+    file_format = (
+        "{time:YYYY-MM-DD HH:mm:ss} | "
+        "{level: <8} | "
+        "{name}:{function}:{line} | "
+        "{message}"
+    )
+    
+    # Add console handler
     logger.add(
-        sys.stderr,
-        level=log_level.upper(),
-        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {message}",
+        sys.stdout,
+        format=console_format,
+        level=log_level,
         colorize=True,
         backtrace=debug,
         diagnose=debug
     )
-
-    # File logger for general application logs
+    
+    # Add file handler
+    log_file = log_file or "logs/jarvis_ai.log"
     logger.add(
-        log_path / "jarvis_app.log",
-        level=log_level.upper(),
-        rotation="10 MB", # Rotate file every 10 MB
-        compression="zip", # Compress old log files
-        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {file.name}:{line} - {message}",
+        log_file,
+        format=file_format,
+        level=log_level,
+        rotation="10 MB",
+        retention="7 days",
+        compression="zip",
         backtrace=debug,
         diagnose=debug
     )
-
-    # Separate file loggers for specific components (e.g., ethical violations, scraping, self-correction)
-    # These logs are also handled by the respective components writing to JSONL files.
-    # This is a fallback/additional stream for these types if needed in the main log.
-    logger.add(
-        "data/ethical_violations/violations.jsonl",
-        filter=lambda record: record["extra"].get("log_type") == "ethical_violation",
-        format="{message}",
-        serialize=True, # Log as JSON
-        rotation="10 MB",
-        retention="30 days",
-        enqueue=True
-    )
-    logger.add(
-        "data/scraping_logs/scraping.jsonl",
-        filter=lambda record: record["extra"].get("log_type") == "scraping",
-        format="{message}",
-        serialize=True, # Log as JSON
-        rotation="10 MB",
-        retention="30 days",
-        enqueue=True
-    )
-    logger.add(
-        "data/self_correction_log/corrections.jsonl",
-        filter=lambda record: record["extra"].get("log_type") == "self_correction",
-        format="{message}",
-        serialize=True, # Log as JSON
-        rotation="10 MB",
-        retention="30 days",
-        enqueue=True
-    )
-
+    
     if debug:
-        logger.debug("Logging configured for DEBUG level.")
-    else:
-        logger.info(f"Logging configured for {log_level.upper()} level.")
+        logger.info("Debug mode enabled - verbose logging active")
+    
+    logger.info(f"Logging initialized - Level: {log_level}, File: {log_file}")
 
 # Initial setup for when modules are imported
-setup_logging()
+setup_logging() # Call setup_logging on module import
 
 # Example usage (for testing this module directly)
 if __name__ == "__main__":
@@ -87,6 +77,10 @@ if __name__ == "__main__":
     logger.error("This is an error message.")
     
     # Example of logging with extra context for filtering
-    logger.info("An ethical violation occurred.", extra={"log_type": "ethical_violation"})
-    logger.info("Scraping completed successfully.", extra={"log_type": "scraping"})
-    logger.info("Self-correction applied.", extra={"log_type": "self_correction"})
+    # Note: The extra context filtering is not supported in the standard logging module
+    logger.info("An ethical violation occurred.")
+    logger.info("Scraping completed successfully.")
+    logger.info("Self-correction applied.")
+
+# Export logger for use in other modules
+__all__ = ["logger", "setup_logging"]

@@ -1,13 +1,13 @@
 loguru>=0.7.2
-PyYAML>=6.0.1
-transformers>=4.30.0
-torch==2.3.1 # For NLP models
-chromadb>=0.4.14
-sentence-transformers>=2.2.2 # For ChromaDB embeddings
+PyYAML==6.0.1
+transformers==4.39.3
+torch==2.2.2 # For NLP models
+chromadb==0.4.24
+sentence-transformers==2.7.0 # For ChromaDB embeddings
 aiohttp==3.9.5
 beautifulsoup4==4.12.3
 requests==2.32.3 # For general HTTP requests
-gradio>=4.0 # For UI interfaces
+gradio==4.26.0 # For UI interfaces
 httpx>=0.25.0
 opencv-python>=4.8.1.78 # For Vision Engine
 numpy # For image/video data manipulation
@@ -16,23 +16,21 @@ python-dotenv # If using .env files (not directly used by v0, but common)
 
 # Optional dependencies for full functionality:
 # For Voice Interface:
-SpeechRecognition>=3.10.0
-gTTS
-# For playing audio (choose one based on OS, or install all for cross-platform)
-# pip install pydub # For cross-platform audio manipulation
-# pip install simpleaudio # For playing audio on some systems
-# For Linux: sudo apt-get install mpg123
-# For macOS: afplay is built-in
-# For Windows: start is built-in
+SpeechRecognition==3.10.0
+gTTS==2.5.1
+playsound==1.3.0
+ffmpeg-python==0.2.0 # Required by playsound for some audio formats/backends
+# Optional: For local Whisper STT model (uncomment if needed)
+# openai-whisper==20231117
 # PyAudio>=0.2.11 # Often requires system-level installation (e.g., portaudio-dev on Linux)
 # For Vision Engine (advanced models, screen recording):
-# mss==9.0.1
-# Pillow==10.3.0
+mss==9.0.1
+Pillow==10.3.0
 # pytesseract==0.3.10
 # pyautogui==0.9.54
 # For Docker/Kubernetes Deployment:
-docker # For Docker integration
-kubernetes # For Kubernetes integration
+# docker
+# kubernetes
 # For Neo4j (alternative memory backend):
 # neo4j==5.21.0
 # For Charting in Admin Dashboard:
@@ -57,6 +55,3 @@ pytest-asyncio>=0.21.0
 # API Integration dependencies (mocked, but real would need these)
 # openai # For OpenAI API
 # huggingface_hub # For Hugging Face API
-
-# Other utilities
-# python-dotenv # If using .env files (not directly used by v0, but common)
